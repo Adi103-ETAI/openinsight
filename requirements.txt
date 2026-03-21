@@ -36,7 +36,7 @@ redis==5.1.1
 # Utilities
 tqdm==4.66.5
 loguru==0.7.2
-tenacity==9.0.0
+tenacity==8.5.0
 python-slugify==8.0.4
 
 # Dev
