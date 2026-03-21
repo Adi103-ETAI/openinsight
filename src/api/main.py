@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from src.api.routes import query as query_router
 
 app = FastAPI(
     title="OpenMed API",
     description="AI Clinical Decision Support for Indian Physicians — SentArc Labs",
     version="0.1.0",
+    redirect_slashes=False,
 )
 
 app.add_middleware(
@@ -20,7 +22,4 @@ async def health():
     return {"status": "ok", "service": "openmed-api"}
 
 
-# Routers will be added here as we build them
-# from src.api.routes import query, ingest
-# app.include_router(query.router, prefix="/query")
-# app.include_router(ingest.router, prefix="/ingest")
+app.include_router(query_router.router, prefix="/query", tags=["Query"])

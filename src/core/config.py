@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # PubMed
     ncbi_api_key: str = ""
-    ncbi_email: str = "adi.singh1426@gmail.com"
+    ncbi_email: str = "sentarc.ai@gmail.com"
 
     # Embeddings
     embedding_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"

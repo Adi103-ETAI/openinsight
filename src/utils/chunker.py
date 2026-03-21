@@ -67,9 +67,20 @@ def _clean(text: str) -> str:
 
 
 def _split_sentences(text: str) -> list[str]:
-    """Basic sentence splitter that respects medical abbreviations."""
-    # Avoid splitting on common medical abbreviations
-    abbrevs = r'(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr|vs|etc|approx|mg|kg|mcg|mL|IV|IM|SC|BD|TDS|OD|SOS|tab|cap|inj|soln))'
-    pattern = abbrevs + r'(?<=[.!?])\s+'
-    parts = re.split(pattern, text)
-    return [p.strip() for p in parts if p.strip()]
+    """Sentence splitter that respects common medical abbreviations."""
+    # Replace known abbreviations with a placeholder to protect them
+    abbrevs = [
+        "Dr", "Mr", "Mrs", "Ms", "Prof", "Sr", "Jr", "vs", "etc",
+        "approx", "mg", "kg", "mcg", "mL", "IV", "IM", "SC", "BD",
+        "TDS", "OD", "SOS", "tab", "cap", "inj", "soln"
+    ]
+    protected = text
+    for abbrev in abbrevs:
+        protected = protected.replace(f"{abbrev}.", f"{abbrev}<DOT>")
+
+    # Split on sentence-ending punctuation followed by whitespace
+    parts = re.split(r'(?<=[.!?])\s+', protected)
+
+    # Restore protected dots
+    sentences = [p.replace("<DOT>", ".").strip() for p in parts if p.strip()]
+    return sentences
