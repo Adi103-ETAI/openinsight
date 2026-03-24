@@ -37,6 +37,14 @@ class DocumentRecord(BaseModel):
     condition_tags: list[str] = Field(default_factory=list)   # e.g. ["tuberculosis", "dengue"]
     specialty_tags: list[str] = Field(default_factory=list)
     ingested_at: datetime = Field(default_factory=datetime.utcnow)
+    year: Optional[int] = None
+    journal: Optional[str] = None
+    study_type: Optional[str] = None
+    population: Optional[str] = None
+    evidence_level: int = 5
+    is_india_specific: bool = False
+    parser_version: str = "v1"
+    total_chunks: int = 0
 
 
 # ── Chunk model ──────────────────────────────────────────────────────────────
@@ -52,3 +60,14 @@ class ChunkRecord(BaseModel):
     char_count: int = 0
     embedded: bool = False    # flipped to True once stored in Qdrant
     embedded_at: Optional[datetime] = None
+    section: Optional[str] = None
+    diseases: list[str] = Field(default_factory=list)
+    drugs: list[str] = Field(default_factory=list)
+    symptoms: list[str] = Field(default_factory=list)
+    content_type: str = "unknown"
+    content_weight: float = 1.0
+    is_india_specific: bool = False
+    evidence_level: int = 5
+    page_number: Optional[int] = None
+    token_count: int = 0
+    parser_version: str = "v1"

@@ -17,6 +17,7 @@ class QueryResponse(BaseModel):
     answer: str
     citations: list[dict]
     query: str
+    rewritten_query: str = ""
     model: str
     chunks_retrieved: int
     mode: str

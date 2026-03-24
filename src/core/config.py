@@ -10,11 +10,11 @@ class Settings(BaseSettings):
 
     # MongoDB
     mongodb_url: str = "mongodb://localhost:27017"
-    mongodb_db: str = "openmed"
+    mongodb_db: str = "openinsight"
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"
-    qdrant_collection: str = "openmed_chunks"
+    qdrant_collection: str = "openinsight_chunks"
 
     # Redis
     redis_url: str = "redis://localhost:6379"
@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Embeddings
     embedding_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"
     embedding_dim: int = 768
+    grobid_url: str = "http://localhost:8070"
+    nim_temperature: float = 0.1
+    nim_max_tokens: int = 1024
+    retrieval_top_k: int = 8
+    reranker_top_n: int = 8
 
     # App
     app_env: str = "development"

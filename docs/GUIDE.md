@@ -1,6 +1,6 @@
-# OpenMed — Developer Guide
+# OpenInsight — Developer Guide
 **SentArc Labs | Pune, India**
-> This is your single reference for everything about building OpenMed. Architecture decisions, how to set up your environment, how each component works, what to build next, and why things are structured the way they are.
+> This is your single reference for everything about building OpenInsight. Architecture decisions, how to set up your environment, how each component works, what to build next, and why things are structured the way they are.
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 1. What We Are Building
 
-OpenMed is a clinical decision support platform for Indian physicians. A doctor types a clinical question and gets a cited answer — grounded in ICMR guidelines, live PubMed research, and Indian clinical literature — in under 10 seconds.
+OpenInsight is a clinical decision support platform for Indian physicians. A doctor types a clinical question and gets a cited answer — grounded in ICMR guidelines, live PubMed research, and Indian clinical literature — in under 10 seconds.
 
 **The core problem it solves:**
 - UpToDate is expensive and built for US clinical contexts
@@ -47,9 +47,9 @@ The system has two major pipelines:
 │ INGESTION PIPELINE                                              │
 │                                                                 │
 │  ICMR PDFs ──┐                                                  │
-│  PubMed API ─┼──► Parsing/ETL ──► MongoDB (Document DB)        │
+│  PubMed API ─┼──► Parsing/ETL ──► MongoDB (Document DB)         │
 │  State docs ─┘         │                                        │
-│                         └──► Chunker ──► Embedder ──► Qdrant   │
+│                         └──► Chunker ──► Embedder ──► Qdrant    │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -131,7 +131,7 @@ Deploys Python/FastAPI directly from GitHub. Managed Postgres and Redis add-ons.
 ### Step 1 — Create the GitHub repo
 
 ```bash
-# On github.com, create a new repo called: openmed
+# On github.com, create a new repo called: openinsight
 # Clone it locally or open directly in Codespaces
 ```
 
@@ -139,7 +139,7 @@ Deploys Python/FastAPI directly from GitHub. Managed Postgres and Redis add-ons.
 
 ```bash
 git init
-git remote add origin https://github.com/YOUR_USERNAME/openmed.git
+git remote add origin https://github.com/YOUR_USERNAME/openinsight.git
 git add .
 git commit -m "init: project scaffold"
 git push -u origin main
@@ -196,7 +196,7 @@ uvicorn src.api.main:app --reload --port 8000
 ## 5. Project File Structure
 
 ```
-openmed/
+openinsight/
 │
 ├── .devcontainer/
 │   ├── devcontainer.json       # Codespaces config — Python 3.11, Docker, Node
@@ -435,7 +435,7 @@ npm install -g @railway/cli
 railway login
 
 # Create new project
-railway new openmed
+railway new openinsight
 
 # Add services
 railway add --service mongodb
@@ -462,7 +462,7 @@ jobs:
       - uses: bervProject/railway-deploy@main
         with:
           railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: openmed-api
+          service: openinsight-api
 ```
 
 ---
@@ -474,9 +474,9 @@ jobs:
 | `NVIDIA_NIM_API_KEY` | Yes | From build.nvidia.com |
 | `NVIDIA_NIM_BASE_URL` | No | Default: NVIDIA's endpoint |
 | `MONGODB_URL` | No | Default: localhost:27017 |
-| `MONGODB_DB` | No | Default: openmed |
+| `MONGODB_DB` | No | Default: openinsight |
 | `QDRANT_URL` | No | Default: localhost:6333 |
-| `QDRANT_COLLECTION` | No | Default: openmed_chunks |
+| `QDRANT_COLLECTION` | No | Default: openinsight_chunks |
 | `REDIS_URL` | No | Default: localhost:6379 |
 | `NCBI_API_KEY` | Recommended | Rate limit: 3 req/s without, 10 with |
 | `NCBI_EMAIL` | Yes | Required by NCBI Entrez policy |
@@ -507,7 +507,7 @@ pytest tests/ -v
 curl http://localhost:6333/collections
 
 # Check MongoDB collections
-mongosh openmed --eval "db.getCollectionNames()"
+mongosh openinsight --eval "db.getCollectionNames()"
 
 # Format code
 black src/
@@ -531,4 +531,4 @@ docker compose down && docker compose up -d --build
 
 ---
 
-*OpenMed — SentArc Labs, Pune | Built by Aditya Singh | adi.singh1426@gmail.com*
+*OpenInsight — SentArc Labs, Pune | Built by Aditya Singh | adi.singh1426@gmail.com*

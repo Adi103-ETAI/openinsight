@@ -38,6 +38,9 @@ tqdm==4.66.5
 loguru==0.7.2
 tenacity==8.5.0
 python-slugify==8.0.4
+pytesseract==0.3.13
+Pillow>=10.0.0
+scispacy==0.5.3
 
 # Dev
 pytest==8.3.3

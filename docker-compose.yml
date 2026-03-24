@@ -1,7 +1,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: openmed_qdrant
+    container_name: openinsight_qdrant
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -11,23 +11,32 @@ services:
 
   mongodb:
     image: mongo:7
-    container_name: openmed_mongo
+    container_name: openinsight_mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
     environment:
-      MONGO_INITDB_DATABASE: openmed
+      MONGO_INITDB_DATABASE: openinsight
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    container_name: openmed_redis
+    container_name: openinsight_redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
+
+  grobid:
+    image: lfoppiano/grobid:0.8.0
+    container_name: openinsight_grobid
+    ports:
+      - "8070:8070"
+    restart: unless-stopped
+    environment:
+      - JAVA_OPTS=-Xmx4g
 
 volumes:
   qdrant_data:

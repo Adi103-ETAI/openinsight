@@ -4,8 +4,10 @@ from openai import AsyncOpenAI
 
 from src.core.config import get_settings
 from src.ingestion.embeddings import embed_query
-from src.ingestion.vector_db import search
+from src.ingestion.vector_db import hybrid_search
 from src.query.prompts import SYSTEM_PROMPT, build_prompt
+from src.query.reranker import rerank_chunks
+from src.query.rewriter import rewrite_query
 
 settings = get_settings()
 
@@ -14,8 +16,15 @@ async def standard_search(query: str, top_k: int = 8) -> dict:
     logger.info(f"Query received: {query}")
 
     try:
-        query_vector = embed_query(query)
-        results = search(query_vector, top_k=top_k)
+        rewritten_query = await rewrite_query(query)
+        query_vector = embed_query(rewritten_query)
+        logger.info(f"Using rewritten query for embedding: {rewritten_query}")
+        retrieval_k = max(top_k * 6, 50)
+        results = hybrid_search(
+            query_text=rewritten_query,
+            query_vector=query_vector,
+            top_k=retrieval_k,
+        )
     except Exception as exc:
         logger.error(f"Vector retrieval failed for query='{query}': {exc}")
         raise HTTPException(status_code=503, detail="Vector search unavailable")
@@ -34,17 +43,20 @@ async def standard_search(query: str, top_k: int = 8) -> dict:
         )
 
     logger.info(f"Chunks retrieved: {len(chunks)}")
+    # Rerank retrieved chunks by true relevance to query
+    chunks = rerank_chunks(rewritten_query, chunks, top_n=settings.reranker_top_n)
 
     if not chunks:
         return {
             "answer": "No relevant clinical information found in the knowledge base for this query.",
             "citations": [],
             "query": query,
+            "rewritten_query": rewritten_query,
             "model": settings.nim_model,
             "chunks_retrieved": 0,
         }
 
-    prompt = build_prompt(query, chunks)
+    prompt = build_prompt(rewritten_query, chunks)
     client = AsyncOpenAI(
         api_key=settings.nvidia_nim_api_key,
         base_url=settings.nvidia_nim_base_url,
@@ -83,6 +95,7 @@ async def standard_search(query: str, top_k: int = 8) -> dict:
         "answer": answer,
         "citations": citations,
         "query": query,
+        "rewritten_query": rewritten_query,
         "model": settings.nim_model,
         "chunks_retrieved": len(chunks),
     }
