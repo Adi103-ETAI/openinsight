@@ -1,7 +1,7 @@
-# OpenMed — Agent Build Context
+# OpenInsight — Agent Build Context
 ## Phase 1: Retrieval Quality (Steps 1.2, 1.3, 1.4)
 
-You are continuing to build **OpenMed** — an AI clinical decision support platform for Indian physicians by SentArc Labs, Pune. Phase 1.1 (system prompt refactor) is already complete.
+You are continuing to build **OpenInsight** — an AI clinical decision support platform for Indian physicians by SentArc Labs, Pune. Phase 1.1 (system prompt refactor) is already complete.
 
 This document covers the remaining three steps of Phase 1. Build them **in order**. Each step has its own verification. Do not move to the next step until the current one verifies cleanly.
 
@@ -10,7 +10,7 @@ This document covers the remaining three steps of Phase 1. Build them **in order
 ## What Is Already Built (Do Not Touch)
 
 ```
-openmed/
+openinsight/
 ├── prompts/
 │   └── system.md                  ← EXISTS — system prompt in Markdown
 ├── src/
@@ -35,7 +35,7 @@ nvidia_nim_api_key: str
 nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
 nim_model: str = "meta/llama-3.1-70b-instruct"
 qdrant_url: str = "http://localhost:6333"
-qdrant_collection: str = "openmed_chunks"
+qdrant_collection: str = "openinsight_chunks"
 embedding_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"
 embedding_dim: int = 768
 nim_temperature: float = 0.1
@@ -672,4 +672,4 @@ For each query paste the `answer` field. The hospital infection query should now
 
 ---
 
-*OpenMed Phase 1 — SentArc Labs | Director: Aditya Singh | adi.singh1426@gmail.com*
+*OpenInsight Phase 1 — SentArc Labs | Director: Aditya Singh | adi.singh1426@gmail.com*

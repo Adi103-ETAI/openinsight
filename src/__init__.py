@@ -1,1 +1,1 @@
-# OpenMed
+# OpenInsight

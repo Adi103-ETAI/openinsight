@@ -1,7 +1,7 @@
 # OpenInsight — Agent Build Context
 ## Phase 2: Ingestion Pipeline v2
 
-You are building **OpenInsight** — an AI clinical decision support platform for Indian physicians by SentArc Labs, Pune. The product was previously called OpenMed. All code references of `openmed` in file paths and imports should be change to `openinsight` — do not rename anything.
+You are building **OpenInsight** — an AI clinical decision support platform for Indian physicians by SentArc Labs, Pune. The product was previously called OpenInsight. All code references of `openinsight` in file paths and imports should be change to `openinsight` — do not rename anything.
 
 Phase 1 is complete. This document covers Phase 2 entirely. Read every section before writing any code.
 
@@ -23,7 +23,7 @@ A complete rebuild of the data ingestion pipeline. The v1 pipeline used flat 512
 ## 2. Current Project Structure
 
 ```
-openinsight/                        ← root (folder may still be named openmed)
+openinsight/                        ← root (folder may still be named openinsight)
 ├── prompts/
 │   ├── system.md                   ← EXISTS
 │   └── query_rewrite.md            ← EXISTS
@@ -110,9 +110,9 @@ class Settings(BaseSettings):
     nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     nim_model: str = "meta/llama-3.1-70b-instruct"
     mongodb_url: str = "mongodb://localhost:27017"
-    mongodb_db: str = "openmed"
+    mongodb_db: str = "openinsight"
     qdrant_url: str = "http://localhost:6333"
-    qdrant_collection: str = "openmed_chunks"
+    qdrant_collection: str = "openinsight_chunks"
     redis_url: str = "redis://localhost:6379"
     ncbi_api_key: str = ""
     ncbi_email: str = "adi.singh1426@gmail.com"
