@@ -50,6 +50,11 @@ def _detect_section_header(line: str) -> Optional[str]:
     line = line.strip()
     if not line or len(line) > 120:
         return None
+    
+    # Skip table-like lines (contain | or + or --- patterns)
+    if '|' in line or '+-' in line or '-+' in line or line.count('-') > 10:
+        return None
+    
     # Short line, possibly title-cased or numbered
     if len(line) < 80 and (
         line.isupper() or re.match(r"^\d+\.?\d*\s+\w", line) or re.match(r"^[A-Z][a-z]+ [A-Z]", line)
@@ -90,9 +95,26 @@ def _split_into_sections(text: str) -> list[tuple[Optional[str], str]]:
 
 
 def _split_by_paragraphs(text: str) -> list[str]:
-    """Split text into paragraphs by double newline or blank line."""
-    paragraphs = re.split(r"\n\s*\n", text)
-    return [p.strip() for p in paragraphs if p.strip()]
+    """
+    Split text into paragraphs.
+    Table blocks ([TABLE]...[/TABLE]) are kept as single units — never split.
+    """
+    segments = []
+    
+    # Split on table markers first
+    table_pattern = re.compile(r'(\[TABLE\].*?\[/TABLE\])', re.DOTALL)
+    parts = table_pattern.split(text)
+    
+    for part in parts:
+        if part.startswith('[TABLE]'):
+            # Keep entire table as one segment
+            segments.append(part.strip())
+        else:
+            # Split non-table text by paragraphs
+            paragraphs = re.split(r'\n\s*\n', part)
+            segments.extend([p.strip() for p in paragraphs if p.strip()])
+    
+    return segments
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -148,6 +170,43 @@ def _merge_into_chunks(
     overlap_buffer = []
 
     for segment in segments:
+        # Table blocks always get their own chunk — never split or merge with other content
+        if segment.startswith('[TABLE]'):
+            if current_words:
+                # Flush current chunk first
+                chunk_text_str = " ".join(current_words)
+                if len(chunk_text_str) >= MIN_CHUNK_CHARS:
+                    chunks.append(
+                        TextChunk(
+                            text=chunk_text_str,
+                            chunk_index=idx,
+                            char_count=len(chunk_text_str),
+                            token_count=current_tokens,
+                            section=section,
+                            level="paragraph",
+                        )
+                    )
+                    idx += 1
+                current_words = []
+                current_tokens = 0
+            
+            # Add table as its own chunk - strip markers but keep content
+            # Tables are always kept even if small (they contain structured data)
+            table_text = segment.replace('[TABLE]', '').replace('[/TABLE]', '').strip()
+            if table_text:
+                chunks.append(
+                    TextChunk(
+                        text=table_text,
+                        chunk_index=idx,
+                        char_count=len(table_text),
+                        token_count=_estimate_tokens(table_text),
+                        section=section,
+                        level="table",
+                    )
+                )
+                idx += 1
+            continue
+        
         segment_tokens = _estimate_tokens(segment)
         segment_words = segment.split()
 
