@@ -28,13 +28,13 @@ def get_db():
 # ── Document model ───────────────────────────────────────────────────────────
 class DocumentRecord(BaseModel):
     """A single ingested source document."""
-    source_type: str          # "icmr" | "pubmed" | "nmc" | "state_guideline"
+    source_type: str          # "icmr" | "pubmed" | "cochrane" | "who" | "cdc" | "statpearls"
     title: str
     content: str              # full raw text
     url: Optional[str] = None
     doi: Optional[str] = None
     published_date: Optional[str] = None
-    condition_tags: list[str] = Field(default_factory=list)   # e.g. ["tuberculosis", "dengue"]
+    condition_tags: list[str] = Field(default_factory=list)
     specialty_tags: list[str] = Field(default_factory=list)
     ingested_at: datetime = Field(default_factory=datetime.utcnow)
     year: Optional[int] = None
@@ -45,6 +45,10 @@ class DocumentRecord(BaseModel):
     is_india_specific: bool = False
     parser_version: str = "v1"
     total_chunks: int = 0
+    # Deduplication fields
+    content_hash: Optional[str] = None   # SHA-256 of normalised content
+    is_duplicate: bool = False
+    duplicate_of: Optional[str] = None   # document_id of canonical copy
 
 
 # ── Chunk model ──────────────────────────────────────────────────────────────
@@ -64,8 +68,14 @@ class ChunkRecord(BaseModel):
     diseases: list[str] = Field(default_factory=list)
     drugs: list[str] = Field(default_factory=list)
     symptoms: list[str] = Field(default_factory=list)
+    dosages: list[str] = Field(default_factory=list)
+    contraindications: list[str] = Field(default_factory=list)
+    patient_populations: list[str] = Field(default_factory=list)
+    outcomes: list[str] = Field(default_factory=list)
+    has_safety_flag: bool = False
     content_type: str = "unknown"
     content_weight: float = 1.0
+    quality_score: float = 1.0   # 0–1 overall chunk quality
     is_india_specific: bool = False
     evidence_level: int = 5
     page_number: Optional[int] = None
