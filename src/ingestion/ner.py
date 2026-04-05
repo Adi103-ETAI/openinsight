@@ -1,6 +1,7 @@
 """
 Medical Named Entity Recognition
-Extracts diseases, drugs, symptoms from chunk text using scispaCy.
+Extracts diseases, drugs, symptoms, dosages, contraindications, patient
+populations, and outcomes from chunk text using scispaCy.
 Falls back to rule-based extraction if model unavailable.
 """
 from functools import lru_cache
@@ -14,7 +15,20 @@ DRUG_PATTERNS = [
     r"streptomycin|amoxicillin|ciprofloxacin|metronidazole|fluconazole|amphotericin|"
     r"artemisinin|chloroquine|primaquine|oseltamivir|acyclovir|cotrimoxazole|"
     r"paracetamol|ibuprofen|aspirin|metformin|insulin|amlodipine|atenolol|"
-    r"enalapril|losartan|furosemide|spironolactone|digoxin|warfarin|heparin)\b",
+    r"enalapril|losartan|furosemide|spironolactone|digoxin|warfarin|heparin|"
+    r"vancomycin|linezolid|meropenem|ceftriaxone|piperacillin|tazobactam|"
+    r"amikacin|gentamicin|colistin|tigecycline|daptomycin|clindamycin|"
+    r"hydroxychloroquine|remdesivir|dexamethasone|methylprednisolone|prednisolone|"
+    r"omeprazole|pantoprazole|ranitidine|ondansetron|metoclopramide|"
+    r"clopidogrel|atorvastatin|rosuvastatin|simvastatin|amlodipine|nifedipine|"
+    r"propranolol|metoprolol|bisoprolol|ramipril|lisinopril|valsartan|"
+    r"levodopa|carbidopa|donepezil|memantine|haloperidol|risperidone|olanzapine|"
+    r"sertraline|fluoxetine|paroxetine|escitalopram|amitriptyline|nortriptyline|"
+    r"carbamazepine|phenytoin|valproate|lamotrigine|levetiracetam|"
+    r"morphine|fentanyl|tramadol|codeine|oxycodone|naloxone|buprenorphine|"
+    r"salbutamol|ipratropium|tiotropium|budesonide|fluticasone|montelukast|"
+    r"methotrexate|hydroxychloroquine|sulfasalazine|adalimumab|infliximab|"
+    r"rituximab|bevacizumab|trastuzumab|imatinib|erlotinib|sorafenib)\b",
 ]
 
 DISEASE_PATTERNS = [
@@ -22,7 +36,59 @@ DISEASE_PATTERNS = [
     r"rickettsial|COVID-19|SARS-CoV-2|pneumonia|sepsis|meningitis|encephalitis|"
     r"hepatitis|cirrhosis|diabetes|hypertension|heart failure|myocardial infarction|"
     r"stroke|asthma|COPD|chronic kidney disease|CKD|anaemia|anemia|cholera|"
-    r"chikungunya|Japanese encephalitis|rabies|snakebite|mucormycosis)\b",
+    r"chikungunya|Japanese encephalitis|rabies|snakebite|mucormycosis|"
+    r"influenza|HIV|AIDS|malignancy|cancer|carcinoma|lymphoma|leukemia|"
+    r"Alzheimer|Parkinson|epilepsy|schizophrenia|bipolar disorder|depression|"
+    r"anxiety disorder|PTSD|autism|ADHD|hypothyroidism|hyperthyroidism|"
+    r"rheumatoid arthritis|lupus|psoriasis|Crohn|ulcerative colitis|"
+    r"osteoporosis|osteoarthritis|gout|ankylosing spondylitis|"
+    r"acute kidney injury|AKI|chronic liver disease|fatty liver|NAFLD|"
+    r"pulmonary embolism|deep vein thrombosis|DVT|atrial fibrillation|"
+    r"acute coronary syndrome|ACS|unstable angina|STEMI|NSTEMI)\b",
+]
+
+# Dosage patterns: e.g. "500 mg", "2.5 mg/kg", "10 mg twice daily"
+DOSAGE_PATTERNS = [
+    r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|mEq|mmol|IU|units?)\b(?:\s*/\s*(?:kg|m2|day|dose|hour|week))?",
+    r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|g)\s*(?:twice|thrice|once|three times?|four times?)\s*(?:daily|a day|per day)\b",
+    r"\b(?:once|twice|thrice|three times?)\s*(?:daily|a day|weekly|per week)\b",
+    r"\b(?:BD|TDS|QID|OD|QDS|PRN|SOS|nocte|mane)\b",
+]
+
+# Contraindication patterns
+CONTRAINDICATION_PATTERNS = [
+    r"\b(?:contraindicated?|avoid(?:ed|ing)?\s+in|not\s+(?:recommended|used?|given?)\s+in|"
+    r"should\s+not\s+(?:be\s+)?used?|do\s+not\s+(?:use|administer)|"
+    r"caution\s+in|use\s+with\s+caution)\b",
+]
+
+# Safety / warning patterns
+SAFETY_PATTERNS = [
+    r"\b(?:warning|caution|alert|black.?box|serious\s+adverse|"
+    r"life.?threatening|fatal|death|toxicity|overdose|"
+    r"anaphylaxis|anaphylactic|hypersensitivity|severe\s+reaction|"
+    r"QT\s*prolongation|nephrotoxic|hepatotoxic|cardiotoxic|neurotoxic|"
+    r"teratogenic|pregnancy\s*category\s*[DX]|fetal\s+(?:harm|risk)|"
+    r"renal\s+failure|liver\s+failure|bone\s+marrow\s+suppression)\b",
+]
+
+# Patient population patterns
+POPULATION_PATTERNS = [
+    r"\b(?:paediatric|pediatric|child(?:ren)?|infant|neonat(?:e|al)|"
+    r"adult|elderly|geriatric|older\s+adults?|"
+    r"pregnant|pregnancy|lactating|breastfeeding|"
+    r"immunocompromised|immunodeficient|HIV.positive|"
+    r"renal(?:\s+impairment)?|hepatic(?:\s+impairment)?|"
+    r"diabetic|hypertensive|obese|underweight)\b",
+]
+
+# Clinical outcome patterns
+OUTCOME_PATTERNS = [
+    r"\b(?:mortality|morbidity|survival|cure\s+rate|response\s+rate|"
+    r"remission|relapse|recurrence|hospitalization|readmission|"
+    r"adverse\s+(?:event|effect|reaction)|side\s+effect|"
+    r"quality\s+of\s+life|QoL|clinical\s+outcome|"
+    r"resolution|recovery|improvement|deterioration|progression)\b",
 ]
 
 
@@ -42,14 +108,19 @@ def _load_scispacy():
 def extract_entities(text: str) -> dict:
     """
     Extract medical entities from text.
-    Returns dict with diseases, drugs, symptoms lists.
+    Returns dict with diseases, drugs, symptoms, dosages, contraindications,
+    patient_populations, outcomes, and has_safety_flag.
     """
-    diseases = []
-    drugs = []
-    symptoms = []
+    diseases: list[str] = []
+    drugs: list[str] = []
+    symptoms: list[str] = []
+    dosages: list[str] = []
+    contraindications: list[str] = []
+    patient_populations: list[str] = []
+    outcomes: list[str] = []
+    has_safety_flag = False
 
     # Rule-based extraction (always runs)
-    text_lower = text.lower()
     for pattern in DRUG_PATTERNS:
         matches = re.findall(pattern, text, re.IGNORECASE)
         drugs.extend([m.lower() for m in matches])
@@ -57,6 +128,33 @@ def extract_entities(text: str) -> dict:
     for pattern in DISEASE_PATTERNS:
         matches = re.findall(pattern, text, re.IGNORECASE)
         diseases.extend([m.lower() for m in matches])
+
+    for pattern in DOSAGE_PATTERNS:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        dosages.extend([m.strip() for m in matches if m.strip()])
+
+    for pattern in CONTRAINDICATION_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            # Extract surrounding context (up to 80 chars) as the contraindication note
+            for m in re.finditer(pattern, text, re.IGNORECASE):
+                start = max(0, m.start() - 10)
+                end = min(len(text), m.end() + 80)
+                snippet = text[start:end].strip()
+                contraindications.append(snippet[:120])
+            break  # one pass is enough
+
+    for pattern in SAFETY_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            has_safety_flag = True
+            break
+
+    for pattern in POPULATION_PATTERNS:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        patient_populations.extend([m.lower().strip() for m in matches])
+
+    for pattern in OUTCOME_PATTERNS:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        outcomes.extend([m.lower().strip() for m in matches])
 
     # scispaCy NER (runs if model available)
     nlp = _load_scispacy()
@@ -77,11 +175,16 @@ def extract_entities(text: str) -> dict:
         except Exception as e:
             logger.debug(f"scispaCy extraction error: {e}")
 
-    # Deduplicate
+    # Deduplicate and limit lists
     return {
-        "diseases": list(set(diseases))[:10],
-        "drugs": list(set(drugs))[:10],
-        "symptoms": list(set(symptoms))[:10],
+        "diseases": list(dict.fromkeys(diseases))[:10],
+        "drugs": list(dict.fromkeys(drugs))[:10],
+        "symptoms": list(dict.fromkeys(symptoms))[:10],
+        "dosages": list(dict.fromkeys(dosages))[:10],
+        "contraindications": list(dict.fromkeys(contraindications))[:5],
+        "patient_populations": list(dict.fromkeys(patient_populations))[:10],
+        "outcomes": list(dict.fromkeys(outcomes))[:10],
+        "has_safety_flag": has_safety_flag,
     }
 
 
@@ -160,8 +263,13 @@ def classify_content_type(text: str, section: Optional[str] = None) -> tuple[str
     ]
     clinical_count = sum(1 for p in clinical_signals if re.search(p, text_lower))
 
+    # Each pattern group covers a distinct biological context; a chunk must match
+    # at least 2 groups to be classified as preclinical (reduces false positives
+    # from texts that mention only one animal/mechanism term incidentally).
     preclinical_signals = [
-        r"\b(?:mouse|rat|animal|in vitro|cell line|assay|mechanism|pathway)\b",
+        r"\b(?:mouse|rat|animal model|in vivo)\b",
+        r"\b(?:in vitro|cell line|cell culture|primary cells)\b",
+        r"\b(?:assay|mechanism|pathway|molecular target)\b",
     ]
     preclinical_count = sum(1 for p in preclinical_signals if re.search(p, text_lower))
 
@@ -196,7 +304,7 @@ def infer_study_type(text: str, title: str = "") -> tuple[str, int]:
         return "rct", 1
     if re.search(r"\b(?:cohort study|case.control|prospective|retrospective study)\b", combined):
         return "observational", 2
-    if re.search(r"\b(?:guideline|recommendation|protocol|ICMR|WHO|NMC|MoHFW)\b", combined):
+    if re.search(r"\b(?:guideline|recommendation|protocol|ICMR|WHO|NMC|MoHFW|CDC|NIH)\b", combined):
         return "guideline", 2
     if re.search(r"\b(?:review article|narrative review|literature review)\b", combined):
         return "review", 3
