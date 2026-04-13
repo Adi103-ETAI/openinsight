@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Qdrant (supports local Docker and Qdrant Cloud)
     qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str = ""   # set for Qdrant Cloud; leave empty for local
+    qdrant_api_key: str = ""  # set for Qdrant Cloud; leave empty for local
     qdrant_collection: str = "openinsight_chunks"
 
     # Redis
@@ -31,20 +31,25 @@ class Settings(BaseSettings):
     nim_temperature: float = 0.1
     nim_max_tokens: int = 1024
     retrieval_top_k: int = 8
+    retrieval_multiplier: int = 3
+    retrieval_min_k: int = 20
+    retrieval_max_k: int = 30
     reranker_top_n: int = 8
+    reranker_batch_size: int = 16
+    reranker_max_chars: int = 1200
 
     # Ingestion pipeline
-    ingestion_batch_size: int = 50       # documents per batch
-    ingestion_max_retries: int = 3       # retry attempts for failed documents
-    ingestion_retry_delay: float = 2.0   # seconds between retries
-    quality_score_threshold: float = 0.3 # drop chunks below this score
+    ingestion_batch_size: int = 50  # documents per batch
+    ingestion_max_retries: int = 3  # retry attempts for failed documents
+    ingestion_retry_delay: float = 2.0  # seconds between retries
+    quality_score_threshold: float = 0.3  # drop chunks below this score
     dedup_title_similarity: float = 0.9  # threshold for fuzzy title dedup
 
     # Scheduler — cron-style (used by APScheduler)
-    scheduler_pubmed_cron: str = "0 2 * * 0"    # Sundays 02:00 UTC
-    scheduler_who_cron: str = "0 3 1 * *"        # 1st of month 03:00 UTC
-    scheduler_cdc_cron: str = "0 4 1 * *"        # 1st of month 04:00 UTC
-    scheduler_cochrane_cron: str = "0 5 1 * *"   # 1st of month 05:00 UTC
+    scheduler_pubmed_cron: str = "0 2 * * 0"  # Sundays 02:00 UTC
+    scheduler_who_cron: str = "0 3 1 * *"  # 1st of month 03:00 UTC
+    scheduler_cdc_cron: str = "0 4 1 * *"  # 1st of month 04:00 UTC
+    scheduler_cochrane_cron: str = "0 5 1 * *"  # 1st of month 05:00 UTC
 
     # App
     app_env: str = "development"

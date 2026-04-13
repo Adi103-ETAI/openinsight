@@ -3,8 +3,9 @@ Query Rewriter
 Rewrites raw doctor queries into expanded medical queries before vector search.
 Uses a fast NIM call with a dedicated rewrite prompt.
 """
+
 from loguru import logger
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
 from pathlib import Path
 
 from src.core.config import get_settings
@@ -18,6 +19,25 @@ def _load_rewrite_prompt() -> str:
 
 
 REWRITE_PROMPT = _load_rewrite_prompt()
+
+
+def _is_bad_rewrite(candidate: str) -> bool:
+    lowered = candidate.lower().strip()
+    if not lowered:
+        return True
+    meta_phrases = [
+        "what is the query",
+        "please provide",
+        "could you provide",
+        "i can help",
+        "normalise",
+        "normalize",
+    ]
+    if any(p in lowered for p in meta_phrases):
+        return True
+    if lowered.endswith("?"):
+        return True
+    return False
 
 
 async def rewrite_query(query: str) -> str:
@@ -43,10 +63,16 @@ async def rewrite_query(query: str) -> str:
             max_tokens=64,
         )
         rewritten = response.choices[0].message.content.strip()
-        if rewritten and len(rewritten) > 3:
+        if rewritten and len(rewritten) > 3 and not _is_bad_rewrite(rewritten):
             logger.info(f"Query rewritten: '{query}' → '{rewritten}'")
             return rewritten
         return query
-    except Exception as exc:
+    except (
+        APIConnectionError,
+        APITimeoutError,
+        RateLimitError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
         logger.warning(f"Query rewrite failed, using original: {exc}")
         return query
