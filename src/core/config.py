@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""  # set for Qdrant Cloud; leave empty for local
     qdrant_collection: str = "openinsight_chunks"
+    qdrant_collection_v2: str = "openinsight_v2"
 
     # Redis
     redis_url: str = "redis://localhost:6379"
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
     # Embeddings
     embedding_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"
     embedding_dim: int = 768
+    dense_model_name: str = "pritamdeka/S-PubMedBert-MS-MARCO"
+    reranker_model_name: str = "BAAI/bge-reranker-base"
     grobid_url: str = "http://localhost:8070"
     nim_temperature: float = 0.1
     nim_max_tokens: int = 1024
@@ -37,6 +40,17 @@ class Settings(BaseSettings):
     reranker_top_n: int = 8
     reranker_batch_size: int = 16
     reranker_max_chars: int = 1200
+
+    # v2 retrieval pipeline knobs (additive, backward-compatible)
+    cache_version: str = "v2"
+    cache_ttl_search: int = 1800
+    cache_ttl_rerank: int = 3600
+    top_k_retrieval: int = 50
+    top_k_after_fusion: int = 20
+    top_k_after_rerank: int = 8
+    top_k_final: int = 6
+    mmr_lambda: float = 0.7
+    hyde_enabled: bool = True
 
     # Ingestion pipeline
     ingestion_batch_size: int = 50  # documents per batch
