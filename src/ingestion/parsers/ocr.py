@@ -3,6 +3,7 @@ OCR Parser
 Uses Tesseract to extract text from scanned PDFs that pdfplumber cannot read.
 Auto-detects scanned PDFs by checking if pdfplumber returns empty text.
 """
+
 import re
 from pathlib import Path
 from loguru import logger
@@ -39,7 +40,7 @@ class OCRParser(BaseParser):
                     if len(text.strip()) > 50:
                         text_found += 1
                 return text_found == 0
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, OSError):
             return False
 
     def parse(self) -> list[DocumentRecord]:
@@ -49,7 +50,6 @@ class OCRParser(BaseParser):
 
         try:
             import pytesseract
-            from PIL import Image
             import pdfplumber
         except ImportError as e:
             logger.error(f"OCR dependencies not installed: {e}")
@@ -68,7 +68,7 @@ class OCRParser(BaseParser):
                         text = re.sub(r"\s+", " ", text).strip()
                         if len(text) > 30:
                             page_texts.append(text)
-                    except Exception as e:
+                    except (RuntimeError, ValueError, TypeError, OSError) as e:
                         logger.debug(f"OCR failed on page {i}: {e}")
 
             if not page_texts:
@@ -89,10 +89,12 @@ class OCRParser(BaseParser):
                 is_india_specific=True,
                 parser_version="v2",
             )
-            logger.info(f"OCR complete: {title[:60]} — {len(full_text)} chars from {len(page_texts)} pages")
+            logger.info(
+                f"OCR complete: {title[:60]} — {len(full_text)} chars from {len(page_texts)} pages"
+            )
             return [doc]
 
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, OSError) as e:
             logger.error(f"OCR parsing failed for {self.file_path.name}: {e}")
             return []
 

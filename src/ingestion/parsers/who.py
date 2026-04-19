@@ -8,9 +8,9 @@ PubMed (WHO publications are partially indexed in MEDLINE).
 Primary strategy: WHO IRIS REST API (JSON)
 Fallback strategy: PubMed search restricted to WHO publications
 """
+
 import re
 import time
-from typing import Optional
 
 import requests
 from loguru import logger
@@ -60,7 +60,7 @@ class WHOParser(BaseParser):
         data = resp.json()
         return data.get("_embedded", {}).get("items", [])
 
-    def _parse_iris_item(self, item: dict) -> Optional[DocumentRecord]:
+    def _parse_iris_item(self, item: dict) -> DocumentRecord | None:
         """Convert a WHO IRIS item dict to a DocumentRecord."""
         name = item.get("name", "").strip()
         handle = item.get("handle", "")
@@ -76,9 +76,13 @@ class WHOParser(BaseParser):
                 meta_map.setdefault(key, []).append(value)
 
         title = (
-            (meta_map.get("dc.title") or meta_map.get("dc.title.alternative") or [name])[0].strip()
+            meta_map.get("dc.title") or meta_map.get("dc.title.alternative") or [name]
+        )[0].strip()
+        abstract_parts = (
+            meta_map.get("dc.description.abstract")
+            or meta_map.get("dc.description")
+            or []
         )
-        abstract_parts = meta_map.get("dc.description.abstract") or meta_map.get("dc.description") or []
         abstract = " ".join(abstract_parts).strip()
 
         if not title or not abstract:
@@ -116,8 +120,12 @@ class WHOParser(BaseParser):
         Entrez.email = self.settings.ncbi_email
         Entrez.api_key = self.settings.ncbi_api_key or None
 
-        full_query = f'({self.query}) AND ("World Health Organization"[Corporate Author])'
-        with Entrez.esearch(db="pubmed", term=full_query, retmax=self.max_results) as handle:
+        full_query = (
+            f'({self.query}) AND ("World Health Organization"[Corporate Author])'
+        )
+        with Entrez.esearch(
+            db="pubmed", term=full_query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
 
         pmids = search_result.get("IdList", [])
@@ -127,7 +135,9 @@ class WHOParser(BaseParser):
         sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
         time.sleep(sleep_seconds)
 
-        with Entrez.efetch(db="pubmed", id=pmids, rettype="xml", retmode="xml") as handle:
+        with Entrez.efetch(
+            db="pubmed", id=pmids, rettype="xml", retmode="xml"
+        ) as handle:
             fetched = Entrez.read(handle)
 
         documents: list[DocumentRecord] = []
@@ -138,8 +148,12 @@ class WHOParser(BaseParser):
             if not title:
                 continue
             abstract = article_data.get("Abstract", {})
-            abstract_parts = abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
-            abstract_text = " ".join(str(p).strip() for p in abstract_parts if str(p).strip())
+            abstract_parts = (
+                abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
+            )
+            abstract_text = " ".join(
+                str(p).strip() for p in abstract_parts if str(p).strip()
+            )
             if not abstract_text:
                 continue
             pmid = str(citation.get("PMID", "")).strip()
@@ -168,13 +182,17 @@ class WHOParser(BaseParser):
                 doc = self._parse_iris_item(item)
                 if doc:
                     documents.append(doc)
-            logger.info(f"[WHO] IRIS returned {len(documents)} documents for query='{self.query}'")
-        except Exception as exc:
+            logger.info(
+                f"[WHO] IRIS returned {len(documents)} documents for query='{self.query}'"
+            )
+        except requests.RequestException as exc:
             logger.warning(f"[WHO] IRIS fetch failed ({exc}), trying PubMed fallback")
             try:
                 documents = self._fetch_pubmed_fallback()
-                logger.info(f"[WHO] PubMed fallback returned {len(documents)} documents")
-            except Exception as exc2:
+                logger.info(
+                    f"[WHO] PubMed fallback returned {len(documents)} documents"
+                )
+            except (RuntimeError, ValueError, TypeError, OSError) as exc2:
                 logger.error(f"[WHO] Both strategies failed: {exc2}")
 
         return documents

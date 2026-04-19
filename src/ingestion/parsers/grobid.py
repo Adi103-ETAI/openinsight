@@ -4,6 +4,7 @@ Uses GROBID REST API to extract structured content from research PDFs.
 Extracts: title, abstract, sections, full text with section labels.
 Falls back to pdfplumber if GROBID is unavailable.
 """
+
 import requests
 from pathlib import Path
 from loguru import logger
@@ -47,9 +48,17 @@ class GROBIDParser(BaseParser):
             if response.status_code == 200:
                 return response.text
             else:
-                logger.warning(f"GROBID returned {response.status_code} for {self.file_path.name}")
+                logger.warning(
+                    f"GROBID returned {response.status_code} for {self.file_path.name}"
+                )
                 return None
-        except Exception as e:
+        except (
+            requests.RequestException,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            OSError,
+        ) as e:
             logger.warning(f"GROBID call failed for {self.file_path.name}: {e}")
             return None
 
@@ -79,7 +88,7 @@ class GROBIDParser(BaseParser):
         if date_tag and date_tag.get("when"):
             try:
                 result["year"] = int(date_tag["when"][:4])
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
         # Journal
@@ -94,7 +103,9 @@ class GROBIDParser(BaseParser):
                 head = div.find("head")
                 section_title = head.get_text().strip() if head else None
                 paragraphs = div.find_all("p")
-                section_text = " ".join(p.get_text(separator=" ").strip() for p in paragraphs)
+                section_text = " ".join(
+                    p.get_text(separator=" ").strip() for p in paragraphs
+                )
                 if section_text.strip():
                     result["sections"].append(
                         {
@@ -114,7 +125,9 @@ class GROBIDParser(BaseParser):
         tei_xml = self._call_grobid()
 
         if not tei_xml:
-            logger.warning(f"GROBID failed, falling back to pdfplumber for: {self.file_path.name}")
+            logger.warning(
+                f"GROBID failed, falling back to pdfplumber for: {self.file_path.name}"
+            )
             from src.ingestion.parsers.icmr import ICMRParser
 
             fallback = ICMRParser(self.file_path)
