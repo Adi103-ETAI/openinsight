@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from loguru import logger
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
+
+from src.core.config import get_settings
+from src.query.prompts import SYSTEM_PROMPT
+from src.query.validator import enhance_response, validate_answer
+from src.search.cache import SearchCache
+from src.search.context_builder import assemble_context, build_citation_list
+from src.search.fusion import reciprocal_rank_fusion
+from src.search.mmr import maximal_marginal_relevance
+from src.search.query_understanding import QueryUnderstanding
+from src.search.reranker import CrossEncoderReranker
+from src.search.retriever import HybridRetriever
+
+router = APIRouter()
+settings = get_settings()
+
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 6
+
+
+class SearchResponse(BaseModel):
+    answer: str
+    citations: list[dict[str, Any]]
+    query_intent: str
+    chunks_retrieved: int
+    cache_hit: bool
+    confidence_score: float = 0.0
+    recommendation: str = "NEEDS_REVIEW"
+    unverified_claims: list[dict[str, Any]] = Field(default_factory=list)
+    safety_warnings: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_distribution: dict[str, Any] = Field(default_factory=dict)
+    is_safe: bool = True
+    needs_disclaimer: bool = False
+    confidence_breakdown: dict[str, Any] | None = None
+
+
+def _get_or_create_component(request: Request, name: str) -> Any:
+    components = getattr(request.app.state, "search_components", None)
+    if components is None:
+        request.app.state.search_components = {}
+        components = request.app.state.search_components
+
+    component = components.get(name)
+    if component is not None:
+        return component
+
+    if name == "query_understanding":
+        component = QueryUnderstanding()
+    elif name == "retriever":
+        component = HybridRetriever()
+    elif name == "reranker":
+        component = CrossEncoderReranker()
+    elif name == "cache":
+        component = SearchCache()
+    else:
+        raise RuntimeError(f"Unknown component requested: {name}")
+
+    components[name] = component
+    return component
+
+
+def _evidence_level_to_numeric(level: Any) -> int:
+    if isinstance(level, int):
+        return min(max(level, 1), 5)
+
+    level_text = str(level or "").strip().lower()
+    if not level_text or level_text == "unknown":
+        return 3
+
+    if level_text.startswith("1"):
+        return 1
+    if level_text.startswith("2"):
+        return 2
+    if level_text.startswith("3"):
+        return 3
+    if level_text.startswith("4"):
+        return 4
+    if level_text.startswith("5"):
+        return 5
+    return 3
+
+
+async def _generate_answer(query: str, context: str) -> str:
+    client = AsyncOpenAI(
+        api_key=settings.nvidia_nim_api_key,
+        base_url=settings.nvidia_nim_base_url,
+    )
+
+    prompt = (
+        "Clinical context passages:\n\n"
+        f"{context}\n\n"
+        f"Doctor's question:\n{query}\n\n"
+        "Provide a concise, clinically actionable answer with numbered citations."
+    )
+
+    response = await client.chat.completions.create(
+        model=settings.nim_model,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=settings.nim_temperature,
+        max_tokens=settings.nim_max_tokens,
+    )
+    return response.choices[0].message.content or ""
+
+
+@router.post("", response_model=SearchResponse)
+async def search_endpoint(payload: SearchRequest, request: Request) -> SearchResponse:
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    query_understanding: QueryUnderstanding = _get_or_create_component(
+        request, "query_understanding"
+    )
+    retriever: HybridRetriever = _get_or_create_component(request, "retriever")
+    reranker: CrossEncoderReranker = _get_or_create_component(request, "reranker")
+    cache: SearchCache = _get_or_create_component(request, "cache")
+
+    analysis = query_understanding.analyze(query)
+    cached = await cache.get_search_result(query, analysis.metadata_filters)
+    if cached:
+        cached["cache_hit"] = True
+        return SearchResponse(**cached)
+
+    retrieval_k = max(settings.top_k_retrieval, payload.top_k)
+
+    try:
+        dense_results, sparse_results = await retriever.retrieve(
+            query,
+            analysis,
+            top_k=retrieval_k,
+        )
+    except Exception as exc:
+        logger.error(f"Search retrieval failed for query='{query}': {exc}")
+        raise HTTPException(
+            status_code=503, detail="Vector search unavailable"
+        ) from exc
+
+    fused = reciprocal_rank_fusion(
+        dense_results,
+        sparse_results,
+        top_n=settings.top_k_after_fusion,
+    )
+
+    reranked = reranker.rerank(
+        query,
+        fused,
+        top_k=min(settings.top_k_after_rerank, len(fused)) if fused else 0,
+    )
+
+    final_k = max(1, payload.top_k)
+    final_chunks = maximal_marginal_relevance(
+        reranked,
+        retriever.embedder,
+        lambda_param=settings.mmr_lambda,
+        n_select=min(final_k, len(reranked)) if reranked else 0,
+    )
+
+    if not final_chunks:
+        empty_response = {
+            "answer": "No relevant clinical information found in the knowledge base for this query.",
+            "citations": [],
+            "query_intent": analysis.intent.value,
+            "chunks_retrieved": 0,
+            "cache_hit": False,
+        }
+        await cache.set_search_result(query, analysis.metadata_filters, empty_response)
+        return SearchResponse(**empty_response)
+
+    context = assemble_context(final_chunks)
+
+    try:
+        answer = await _generate_answer(query, context)
+    except Exception as exc:
+        logger.error(f"Search answer generation failed for query='{query}': {exc}")
+        raise HTTPException(status_code=503, detail="LLM service unavailable") from exc
+
+    citations = build_citation_list(final_chunks)
+
+    validator_citations: list[dict[str, Any]] = []
+    validator_chunks: list[dict[str, Any]] = []
+
+    for idx, chunk in enumerate(final_chunks, start=1):
+        metadata = chunk.metadata or {}
+        source_type = str(metadata.get("source_type", "unknown"))
+
+        validator_citations.append(
+            {
+                "index": idx,
+                "title": metadata.get("title", ""),
+                "source_type": source_type,
+                "mongo_id": str(metadata.get("mongo_id", "")),
+                "evidence_level": _evidence_level_to_numeric(
+                    metadata.get("evidence_level")
+                ),
+            }
+        )
+
+        validator_chunks.append(
+            {
+                "chunk_text": chunk.text,
+                "title": metadata.get("title", ""),
+                "source_type": source_type,
+                "score": float(chunk.score),
+                "quality_score": metadata.get("quality_score"),
+            }
+        )
+
+    validation = await validate_answer(
+        answer=answer,
+        citations=validator_citations,
+        source_chunks=validator_chunks,
+        verify_citations_in_db=False,
+    )
+
+    base_response = {
+        "answer": answer,
+        "citations": citations,
+        "query_intent": analysis.intent.value,
+        "chunks_retrieved": len(final_chunks),
+        "cache_hit": False,
+    }
+    response = enhance_response(base_response, validation)
+
+    await cache.set_search_result(query, analysis.metadata_filters, response)
+    return SearchResponse(**response)

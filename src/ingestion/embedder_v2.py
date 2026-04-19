@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 import torch
@@ -126,8 +126,9 @@ class DualEmbedderV2:
 
         tf = Counter(tokens)
         total_tokens = len(tokens)
-        indices: list[int] = []
-        values: list[float] = []
+        # Qdrant sparse vectors require unique indices; hash collisions can
+        # produce duplicates, so merge weights by index.
+        weight_by_index: dict[int, float] = defaultdict(float)
 
         for term, count in tf.items():
             term_idx = self._term_to_index(term)
@@ -135,10 +136,15 @@ class DualEmbedderV2:
             idf_weight = self._get_idf_weight(term)
             weight = tf_norm * idf_weight
             if weight > 0.001:
-                indices.append(term_idx)
-                values.append(float(weight))
+                weight_by_index[term_idx] += float(weight)
 
-        return {"indices": indices, "values": values}
+        if not weight_by_index:
+            return {"indices": [], "values": []}
+
+        sorted_indices = sorted(weight_by_index.keys())
+        sorted_values = [weight_by_index[idx] for idx in sorted_indices]
+
+        return {"indices": sorted_indices, "values": sorted_values}
 
     def _medical_tokenize(self, text: str) -> list[str]:
         text_lower = text.lower()
