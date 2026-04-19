@@ -12,7 +12,7 @@ Usage:
     parser = StatPearlsParser(query="tuberculosis treatment", max_results=20)
     documents = parser.parse()
 """
-import re
+
 import time
 from typing import Optional
 
@@ -55,11 +55,15 @@ class StatPearlsParser(BaseParser):
 
         # Search PMC for StatPearls articles
         full_query = f'("{self.query}") AND ("StatPearls"[Book])'
-        with Entrez.esearch(db="pmc", term=full_query, retmax=self.max_results) as handle:
+        with Entrez.esearch(
+            db="pmc", term=full_query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
 
         pmcids = search_result.get("IdList", [])
-        logger.info(f"[StatPearls] query='{self.query}' found {len(pmcids)} PMC results")
+        logger.info(
+            f"[StatPearls] query='{self.query}' found {len(pmcids)} PMC results"
+        )
         return pmcids
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
@@ -84,7 +88,6 @@ class StatPearlsParser(BaseParser):
         try:
             front = article.get("front", {})
             article_meta = front.get("article-meta", {})
-            journal_meta = front.get("journal-meta", {})
 
             # Title
             title_group = article_meta.get("title-group", {})
@@ -130,8 +133,11 @@ class StatPearlsParser(BaseParser):
                         elif aid.get("pub-id-type") == "pmid":
                             pmid = str(aid.get("#text", "")).strip()
 
-            url = f"https://www.ncbi.nlm.nih.gov/books/{_STATPEARLS_BOOK_ID}/" if not pmcid else \
-                  f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid}/"
+            url = (
+                f"https://www.ncbi.nlm.nih.gov/books/{_STATPEARLS_BOOK_ID}/"
+                if not pmcid
+                else f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid}/"
+            )
             doi = f"PMID:{pmid}" if pmid else (f"PMC:{pmcid}" if pmcid else None)
 
             return DocumentRecord(
@@ -147,7 +153,7 @@ class StatPearlsParser(BaseParser):
                 evidence_level=3,  # Peer-reviewed book chapter
                 parser_version="v3",
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.debug(f"[StatPearls] Error parsing article: {exc}")
             return None
 
@@ -160,8 +166,10 @@ class StatPearlsParser(BaseParser):
         Entrez.email = self.settings.ncbi_email
         Entrez.api_key = self.settings.ncbi_api_key or None
 
-        full_query = f'({self.query}) AND (StatPearls[Title/Abstract])'
-        with Entrez.esearch(db="pubmed", term=full_query, retmax=self.max_results) as handle:
+        full_query = f"({self.query}) AND (StatPearls[Title/Abstract])"
+        with Entrez.esearch(
+            db="pubmed", term=full_query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
 
         pmids = search_result.get("IdList", [])
@@ -171,7 +179,9 @@ class StatPearlsParser(BaseParser):
         sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
         time.sleep(sleep_seconds)
 
-        with Entrez.efetch(db="pubmed", id=pmids, rettype="xml", retmode="xml") as handle:
+        with Entrez.efetch(
+            db="pubmed", id=pmids, rettype="xml", retmode="xml"
+        ) as handle:
             fetched = Entrez.read(handle)
 
         documents: list[DocumentRecord] = []
@@ -182,8 +192,12 @@ class StatPearlsParser(BaseParser):
             if not title:
                 continue
             abstract = article_data.get("Abstract", {})
-            abstract_parts = abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
-            abstract_text = " ".join(str(p).strip() for p in abstract_parts if str(p).strip())
+            abstract_parts = (
+                abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
+            )
+            abstract_text = " ".join(
+                str(p).strip() for p in abstract_parts if str(p).strip()
+            )
             if not abstract_text:
                 continue
             pmid = str(citation.get("PMID", "")).strip()
@@ -217,8 +231,10 @@ class StatPearlsParser(BaseParser):
                 logger.info(
                     f"[StatPearls] Parsed {len(documents)} documents for query='{self.query}'"
                 )
-        except Exception as exc:
-            logger.warning(f"[StatPearls] PMC fetch failed ({exc}), trying PubMed fallback")
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            logger.warning(
+                f"[StatPearls] PMC fetch failed ({exc}), trying PubMed fallback"
+            )
 
         # Fallback if nothing found
         if not documents:
@@ -227,7 +243,7 @@ class StatPearlsParser(BaseParser):
                 logger.info(
                     f"[StatPearls] PubMed fallback returned {len(documents)} documents"
                 )
-            except Exception as exc2:
+            except (RuntimeError, ValueError, TypeError, OSError) as exc2:
                 logger.error(f"[StatPearls] Both strategies failed: {exc2}")
 
         return documents

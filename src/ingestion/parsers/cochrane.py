@@ -9,6 +9,7 @@ Usage:
     parser = CochraneParser(query="hypertension management", max_results=50)
     documents = parser.parse()
 """
+
 import re
 import time
 
@@ -47,7 +48,9 @@ class CochraneParser(BaseParser):
         # Restrict query to Cochrane journal
         full_query = f'({self.query}) AND ("{_COCHRANE_JOURNAL}"[Journal])'
 
-        with Entrez.esearch(db="pubmed", term=full_query, retmax=self.max_results) as handle:
+        with Entrez.esearch(
+            db="pubmed", term=full_query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
 
         pmids = search_result.get("IdList", [])
@@ -58,7 +61,9 @@ class CochraneParser(BaseParser):
         sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
         time.sleep(sleep_seconds)
 
-        with Entrez.efetch(db="pubmed", id=pmids, rettype="xml", retmode="xml") as handle:
+        with Entrez.efetch(
+            db="pubmed", id=pmids, rettype="xml", retmode="xml"
+        ) as handle:
             fetched = Entrez.read(handle)
 
         return fetched.get("PubmedArticle", [])
@@ -77,8 +82,14 @@ class CochraneParser(BaseParser):
                     continue
 
                 abstract = article_data.get("Abstract", {})
-                abstract_parts = abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
-                abstract_text = " ".join(str(p).strip() for p in abstract_parts if str(p).strip())
+                abstract_parts = (
+                    abstract.get("AbstractText", [])
+                    if isinstance(abstract, dict)
+                    else []
+                )
+                abstract_text = " ".join(
+                    str(p).strip() for p in abstract_parts if str(p).strip()
+                )
                 if not abstract_text:
                     continue
 
@@ -110,9 +121,11 @@ class CochraneParser(BaseParser):
                 )
                 documents.append(doc)
 
-            logger.info(f"[Cochrane] Parsed {len(documents)} documents for query='{self.query}'")
+            logger.info(
+                f"[Cochrane] Parsed {len(documents)} documents for query='{self.query}'"
+            )
             return documents
 
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[Cochrane] parse failed for query='{self.query}': {exc}")
             return []

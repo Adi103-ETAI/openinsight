@@ -3,17 +3,19 @@ Ingestion Pipeline v2
 Uses hierarchical chunking, metadata extraction, NER, content classification.
 Replaces pipeline.py for new ingestion. Old pipeline.py still works for compatibility.
 """
-from datetime import datetime
-from uuid import uuid4
 
-from loguru import logger
-from qdrant_client.models import PointStruct
+from datetime import datetime
+import importlib
+import logging
+from uuid import uuid4
 
 from src.ingestion.document_db import ChunkRecord, DocumentRecord, get_db
 from src.ingestion.embeddings import embed_texts
-from src.ingestion.ner import extract_entities, classify_content_type, infer_study_type
+from src.ingestion.ner import extract_entities, classify_content_type
 from src.ingestion.vector_db import ensure_collection, upsert_chunks
 from src.utils.chunker_v2 import chunk_text_v2
+
+logger = logging.getLogger(__name__)
 
 
 async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
@@ -37,7 +39,9 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
     qdrant_ready = False
 
     for document in documents:
-        logger.info(f"[v2] Processing: {document.title[:60]} ({document.source_type})")
+        logger.info(
+            "[v2] Processing: %s (%s)", document.title[:60], document.source_type
+        )
 
         # Store document
         doc_dict = document.model_dump()
@@ -47,7 +51,9 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
 
         # Hierarchical chunking
         text_chunks = chunk_text_v2(document.content)
-        logger.info(f"[v2] Created {len(text_chunks)} chunks for: {document.title[:60]}")
+        logger.info(
+            "[v2] Created %s chunks for: %s", len(text_chunks), document.title[:60]
+        )
 
         if not text_chunks:
             continue
@@ -59,7 +65,9 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
             entities = extract_entities(text_chunk.text)
 
             # Content classification
-            content_type, weight = classify_content_type(text_chunk.text, text_chunk.section)
+            content_type, weight = classify_content_type(
+                text_chunk.text, text_chunk.section
+            )
 
             # Skip noise chunks
             if content_type == "noise":
@@ -70,7 +78,10 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
             is_india = (
                 document.is_india_specific
                 or document.source_type in ("icmr", "nmc", "mohfw", "state_guideline")
-                or any(w in text_chunk.text.lower() for w in ["india", "indian", "icmr", "nmc", "aiims"])
+                or any(
+                    w in text_chunk.text.lower()
+                    for w in ["india", "indian", "icmr", "nmc", "aiims"]
+                )
             )
 
             chunk_record = ChunkRecord(
@@ -113,17 +124,27 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
                 ensure_collection()
                 qdrant_ready = True
 
+            try:
+                point_struct_cls = getattr(
+                    importlib.import_module("qdrant_client.models"), "PointStruct"
+                )
+            except (ImportError, AttributeError) as exc:
+                logger.error("[v2] Qdrant client unavailable: %s", exc)
+                continue
+
             points = []
-            for chunk, vector, mongo_id in zip(chunk_records, embeddings, chunk_mongo_ids):
+            for chunk, vector, mongo_id in zip(
+                chunk_records, embeddings, chunk_mongo_ids
+            ):
                 sparse_vec = {}
                 try:
                     from src.ingestion.vector_db import build_sparse_vector
 
                     sparse_vec = build_sparse_vector(chunk.chunk_text)
-                except Exception:
+                except ImportError:
                     sparse_vec = {}
                 points.append(
-                    PointStruct(
+                    point_struct_cls(
                         id=str(uuid4()),
                         vector={
                             "dense": vector,
@@ -161,11 +182,13 @@ async def run_pipeline_v2(documents: list[DocumentRecord]) -> dict:
             )
 
             summary["chunks_embedded"] += len(points)
-            logger.info(f"[v2] Embedded {len(points)} chunks for: {document.title[:60]}")
+            logger.info(
+                "[v2] Embedded %s chunks for: %s", len(points), document.title[:60]
+            )
 
-        except Exception as e:
-            logger.error(f"[v2] Embedding failed for '{document.title}': {e}")
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            logger.error("[v2] Embedding failed for '%s': %s", document.title, e)
 
     # Update document total_chunks count
-    logger.info(f"[v2] Pipeline complete: {summary}")
+    logger.info("[v2] Pipeline complete: %s", summary)
     return summary

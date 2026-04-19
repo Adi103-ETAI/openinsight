@@ -51,7 +51,9 @@ async def run_pipeline(documents: list[DocumentRecord]) -> dict:
 
         chunk_payloads = [chunk.model_dump() for chunk in chunk_records]
         insert_many_result = await chunks_collection.insert_many(chunk_payloads)
-        chunk_mongo_ids = [str(chunk_id) for chunk_id in insert_many_result.inserted_ids]
+        chunk_mongo_ids = [
+            str(chunk_id) for chunk_id in insert_many_result.inserted_ids
+        ]
         summary["chunks_created"] += len(chunk_mongo_ids)
 
         try:
@@ -63,8 +65,8 @@ async def run_pipeline(documents: list[DocumentRecord]) -> dict:
                 qdrant_ready = True
 
             points: list[PointStruct] = []
-            for idx, (chunk, vector, mongo_id) in enumerate(
-                zip(chunk_records, embeddings, chunk_mongo_ids, strict=False)
+            for chunk, vector, mongo_id in zip(
+                chunk_records, embeddings, chunk_mongo_ids, strict=False
             ):
                 points.append(
                     PointStruct(
@@ -91,8 +93,10 @@ async def run_pipeline(documents: list[DocumentRecord]) -> dict:
             )
 
             summary["chunks_embedded"] += len(points)
-            logger.info(f"Embedded and indexed {len(points)} chunks for document: {document.title}")
-        except Exception as exc:
+            logger.info(
+                f"Embedded and indexed {len(points)} chunks for document: {document.title}"
+            )
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(
                 f"Embedding/indexing failed for document '{document.title}' (doc_id={document_id}): {exc}"
             )

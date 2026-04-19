@@ -39,7 +39,9 @@ class PubMedParser(BaseParser):
         Entrez.email = self.settings.ncbi_email
         Entrez.api_key = self.settings.ncbi_api_key or None
 
-        with Entrez.esearch(db="pubmed", term=self.query, retmax=self.max_results) as handle:
+        with Entrez.esearch(
+            db="pubmed", term=self.query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
         pmids = search_result.get("IdList", [])
 
@@ -50,7 +52,9 @@ class PubMedParser(BaseParser):
         sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
         time.sleep(sleep_seconds)
 
-        with Entrez.efetch(db="pubmed", id=pmids, rettype="xml", retmode="xml") as handle:
+        with Entrez.efetch(
+            db="pubmed", id=pmids, rettype="xml", retmode="xml"
+        ) as handle:
             fetched = Entrez.read(handle)
 
         return fetched.get("PubmedArticle", [])
@@ -70,15 +74,22 @@ class PubMedParser(BaseParser):
                     continue
 
                 abstract = article_data.get("Abstract", {})
-                abstract_text_parts = abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
-                abstract_text = " ".join(str(part).strip() for part in abstract_text_parts if str(part).strip())
+                abstract_text_parts = (
+                    abstract.get("AbstractText", [])
+                    if isinstance(abstract, dict)
+                    else []
+                )
+                abstract_text = " ".join(
+                    str(part).strip()
+                    for part in abstract_text_parts
+                    if str(part).strip()
+                )
                 if not abstract_text:
                     continue
 
                 pmid = str(citation.get("PMID", "")).strip()
 
                 journal = article_data.get("Journal", {})
-                journal_title = str(journal.get("Title", "")).strip()
 
                 year = ""
                 journal_issue = journal.get("JournalIssue", {})
@@ -106,6 +117,6 @@ class PubMedParser(BaseParser):
                 f"PubMed query='{self.query}' parsed {len(documents)} documents with abstracts"
             )
             return documents
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"PubMed parse failed for query='{self.query}': {exc}")
             return []

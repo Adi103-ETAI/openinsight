@@ -1,11 +1,12 @@
 import re
+import importlib
+import logging
 from pathlib import Path
-
-import pdfplumber
-from loguru import logger
 
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
+
+logger = logging.getLogger(__name__)
 
 NOISE_WORDS = {
     "icmr",
@@ -92,7 +93,9 @@ class ICMRParser(BaseParser):
         # Clean cells — replace None with empty string
         cleaned = []
         for row in table:
-            cleaned_row = [str(cell).strip() if cell is not None else "" for cell in row]
+            cleaned_row = [
+                str(cell).strip() if cell is not None else "" for cell in row
+            ]
             cleaned.append(cleaned_row)
 
         # Skip if table is mostly empty
@@ -105,8 +108,7 @@ class ICMRParser(BaseParser):
         num_cols = max(len(row) for row in cleaned)
         for col_idx in range(num_cols):
             width = max(
-                (len(row[col_idx]) if col_idx < len(row) else 0)
-                for row in cleaned
+                (len(row[col_idx]) if col_idx < len(row) else 0) for row in cleaned
             )
             col_widths.append(max(width, 4))
 
@@ -115,7 +117,9 @@ class ICMRParser(BaseParser):
         for row_idx, row in enumerate(cleaned):
             # Pad row to num_cols
             padded = row + [""] * (num_cols - len(row))
-            line = " | ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(padded))
+            line = " | ".join(
+                cell.ljust(col_widths[i]) for i, cell in enumerate(padded)
+            )
             lines.append(line)
             # Add separator after header row
             if row_idx == 0:
@@ -150,7 +154,7 @@ class ICMRParser(BaseParser):
             try:
                 # Get text outside table bounding boxes
                 full_text = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, OSError):
                 full_text = page.extract_text() or ""
 
             text = full_text.strip()
@@ -164,13 +168,19 @@ class ICMRParser(BaseParser):
 
     def parse(self) -> list[DocumentRecord]:
         if not self.file_path.exists():
-            logger.error(f"ICMR file not found: {self.file_path}")
+            logger.error("ICMR file not found: %s", self.file_path)
             return []
 
         try:
+            pdfplumber = importlib.import_module("pdfplumber")
+
             with pdfplumber.open(self.file_path) as pdf:
                 page_count = len(pdf.pages)
-                logger.info(f"Parsing ICMR PDF: {self.file_path.name} ({page_count} pages)")
+                logger.info(
+                    "Parsing ICMR PDF: %s (%s pages)",
+                    self.file_path.name,
+                    page_count,
+                )
 
                 pages_content = []
                 table_count = 0
@@ -184,24 +194,24 @@ class ICMRParser(BaseParser):
                         content = self._extract_page_content(page)
                         if content.strip():
                             pages_content.append(content)
-                    except Exception as e:
-                        logger.debug(f"Page extraction error: {e}")
+                    except (RuntimeError, ValueError, TypeError, OSError) as e:
+                        logger.debug("Page extraction error: %s", e)
                         # Fallback to simple text extraction for this page
                         text = page.extract_text() or ""
                         if text.strip():
                             pages_content.append(text)
 
-                logger.info(f"Found {table_count} tables in {self.file_path.name}")
+                logger.info("Found %s tables in %s", table_count, self.file_path.name)
 
-        except Exception as exc:
-            logger.error(f"Failed to read ICMR PDF {self.file_path}: {exc}")
+        except (ImportError, RuntimeError, ValueError, TypeError, OSError) as exc:
+            logger.error("Failed to read ICMR PDF %s: %s", self.file_path, exc)
             return []
 
         raw_content = "\n\n".join(pages_content)
         cleaned_content = self._clean_text(raw_content)
 
         if not cleaned_content:
-            logger.error(f"No parseable text extracted from: {self.file_path}")
+            logger.error("No parseable text extracted from: %s", self.file_path)
             return []
 
         title = self.file_path.stem.replace("_", " ")
@@ -214,5 +224,10 @@ class ICMRParser(BaseParser):
             is_india_specific=True,
             parser_version="v2",
         )
-        logger.info(f"Parsed {self.file_path.name}: {len(cleaned_content)} chars, {table_count} tables")
+        logger.info(
+            "Parsed %s: %s chars, %s tables",
+            self.file_path.name,
+            len(cleaned_content),
+            table_count,
+        )
         return [document]

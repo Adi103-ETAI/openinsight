@@ -3,7 +3,10 @@ Re-ingestion Script v2
 Clears old v1 data, re-ingests all ICMR PDFs using the v2 pipeline.
 Run this once after Phase 2 is complete.
 """
+
 import asyncio
+import importlib
+import logging
 import sys
 from pathlib import Path
 
@@ -11,17 +14,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from loguru import logger
-from src.ingestion.parsers.icmr import ICMRParser
-from src.ingestion.parsers.ocr import OCRParser, is_scanned_check
-from src.ingestion.pipeline_v2 import run_pipeline_v2
+logger = logging.getLogger(__name__)
+
+
+def _import_attr(module_name: str, attr_name: str):
+    module = importlib.import_module(module_name)
+    return getattr(module, attr_name)
 
 
 async def clear_v1_data():
     """Remove all v1-ingested ICMR documents and their chunks from MongoDB and Qdrant."""
-    from src.ingestion.document_db import get_db
-    from src.ingestion.vector_db import get_qdrant
-    from src.core.config import get_settings
+    get_db = _import_attr("src.ingestion.document_db", "get_db")
+    get_qdrant = _import_attr("src.ingestion.vector_db", "get_qdrant")
+    get_settings = _import_attr("src.core.config", "get_settings")
 
     settings = get_settings()
     db = get_db()
@@ -36,7 +41,7 @@ async def clear_v1_data():
             ],
         }
     )
-    logger.info(f"Deleted {result.deleted_count} v1 documents")
+    logger.info("Deleted %s v1 documents", result.deleted_count)
 
     chunk_result = await db["chunks"].delete_many(
         {
@@ -47,7 +52,7 @@ async def clear_v1_data():
             ],
         }
     )
-    logger.info(f"Deleted {chunk_result.deleted_count} v1 chunks")
+    logger.info("Deleted %s v1 chunks", chunk_result.deleted_count)
 
     # Clear Qdrant collection entirely and recreate
     client = get_qdrant()
@@ -56,6 +61,10 @@ async def clear_v1_data():
 
 
 async def main():
+    icmr_parser_cls = _import_attr("src.ingestion.parsers.icmr", "ICMRParser")
+    ocr_parser_cls = _import_attr("src.ingestion.parsers.ocr", "OCRParser")
+    run_pipeline_v2 = _import_attr("src.ingestion.pipeline_v2", "run_pipeline_v2")
+
     icmr_dir = Path("data/raw/icmr")
     if not icmr_dir.exists():
         print("data/raw/icmr/ not found. Add ICMR PDFs first.")
@@ -77,12 +86,12 @@ async def main():
 
     for pdf_path in pdf_files:
         # Try pdfplumber first, fall back to OCR for scanned PDFs
-        parser = ICMRParser(pdf_path)
+        parser = icmr_parser_cls(pdf_path)
         docs = parser.parse()
 
         if not docs or not docs[0].content.strip():
-            logger.warning(f"pdfplumber got no text, trying OCR: {pdf_path.name}")
-            parser = OCRParser(pdf_path, source_type="icmr")
+            logger.warning("pdfplumber got no text, trying OCR: %s", pdf_path.name)
+            parser = ocr_parser_cls(pdf_path, source_type="icmr")
             docs = parser.parse()
             if docs:
                 ocr_used += 1
@@ -95,7 +104,7 @@ async def main():
             all_documents.extend(docs)
             parsed += 1
         else:
-            logger.error(f"Failed to parse: {pdf_path.name}")
+            logger.error("Failed to parse: %s", pdf_path.name)
             failed += 1
 
     print("\nParsing complete:")

@@ -10,9 +10,9 @@ Usage:
     parser = CDCParser(query="malaria prevention", max_results=30)
     documents = parser.parse()
 """
+
 import re
 import time
-from typing import Optional
 
 import requests
 from loguru import logger
@@ -64,7 +64,7 @@ class CDCParser(BaseParser):
         data = resp.json()
         return data.get("results", [])
 
-    def _cdc_item_to_doc(self, item: dict) -> Optional[DocumentRecord]:
+    def _cdc_item_to_doc(self, item: dict) -> DocumentRecord | None:
         """Convert a CDC API item to a DocumentRecord."""
         title = (item.get("title") or "").strip()
         description = (item.get("description") or "").strip()
@@ -109,7 +109,9 @@ class CDCParser(BaseParser):
         )
         full_query = f"({self.query}) AND {org_filter}"
 
-        with Entrez.esearch(db="pubmed", term=full_query, retmax=self.max_results) as handle:
+        with Entrez.esearch(
+            db="pubmed", term=full_query, retmax=self.max_results
+        ) as handle:
             search_result = Entrez.read(handle)
 
         pmids = search_result.get("IdList", [])
@@ -119,7 +121,9 @@ class CDCParser(BaseParser):
         sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
         time.sleep(sleep_seconds)
 
-        with Entrez.efetch(db="pubmed", id=pmids, rettype="xml", retmode="xml") as handle:
+        with Entrez.efetch(
+            db="pubmed", id=pmids, rettype="xml", retmode="xml"
+        ) as handle:
             fetched = Entrez.read(handle)
 
         documents: list[DocumentRecord] = []
@@ -130,8 +134,12 @@ class CDCParser(BaseParser):
             if not title:
                 continue
             abstract = article_data.get("Abstract", {})
-            abstract_parts = abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
-            abstract_text = " ".join(str(p).strip() for p in abstract_parts if str(p).strip())
+            abstract_parts = (
+                abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
+            )
+            abstract_text = " ".join(
+                str(p).strip() for p in abstract_parts if str(p).strip()
+            )
             if not abstract_text:
                 continue
             pmid = str(citation.get("PMID", "")).strip()
@@ -160,13 +168,17 @@ class CDCParser(BaseParser):
                 doc = self._cdc_item_to_doc(item)
                 if doc:
                     documents.append(doc)
-            logger.info(f"[CDC] API returned {len(documents)} documents for query='{self.query}'")
-        except Exception as exc:
+            logger.info(
+                f"[CDC] API returned {len(documents)} documents for query='{self.query}'"
+            )
+        except requests.RequestException as exc:
             logger.warning(f"[CDC] API failed ({exc}), trying PubMed fallback")
             try:
                 documents = self._fetch_pubmed_fallback()
-                logger.info(f"[CDC] PubMed fallback returned {len(documents)} documents")
-            except Exception as exc2:
+                logger.info(
+                    f"[CDC] PubMed fallback returned {len(documents)} documents"
+                )
+            except (RuntimeError, ValueError, TypeError, OSError) as exc2:
                 logger.error(f"[CDC] Both strategies failed: {exc2}")
 
         return documents

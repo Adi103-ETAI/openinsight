@@ -5,14 +5,29 @@ Full pipeline: parse → dedup → chunk → NER → quality score → validate 
 Supports batch processing from multiple sources with error handling, retry
 logic, progress tracking, and cost-optimised rate limiting.
 """
+
 import asyncio
 from datetime import datetime
-from typing import Optional
+import importlib
+import logging
 from uuid import uuid4
 
-from loguru import logger
-from qdrant_client.models import PointStruct
-from tenacity import retry, stop_after_attempt, wait_exponential
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential
+except ImportError:
+
+    def retry(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+    def stop_after_attempt(_attempts):
+        return None
+
+    def wait_exponential(**_kwargs):
+        return None
+
 
 from src.core.config import get_settings
 from src.ingestion.deduplication import enrich_document_hashes, is_duplicate
@@ -22,8 +37,14 @@ from src.ingestion.monitoring import IngestionMonitor, RunMetrics
 from src.ingestion.ner import classify_content_type, extract_entities, infer_study_type
 from src.ingestion.quality import score_chunks
 from src.ingestion.validation import filter_valid_chunks, validate_document
-from src.ingestion.vector_db import build_sparse_vector, ensure_collection, upsert_chunks
+from src.ingestion.vector_db import (
+    build_sparse_vector,
+    ensure_collection,
+    upsert_chunks,
+)
 from src.utils.chunker_v2 import chunk_text_v2
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -36,7 +57,7 @@ settings = get_settings()
 async def _embed_and_store(
     chunk_records: list[ChunkRecord],
     chunk_mongo_ids: list[str],
-    metrics: RunMetrics,
+    _metrics: RunMetrics,
 ) -> int:
     """Embed chunk texts and upsert to Qdrant. Returns number of points stored."""
     texts = [c.chunk_text for c in chunk_records]
@@ -44,11 +65,18 @@ async def _embed_and_store(
 
     ensure_collection()
 
-    points: list[PointStruct] = []
+    try:
+        point_struct_cls = getattr(
+            importlib.import_module("qdrant_client.models"), "PointStruct"
+        )
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(f"Qdrant PointStruct unavailable: {exc}") from exc
+
+    points = []
     for chunk, vector, mongo_id in zip(chunk_records, embeddings, chunk_mongo_ids):
         sparse_vec = build_sparse_vector(chunk.chunk_text)
         points.append(
-            PointStruct(
+            point_struct_cls(
                 id=str(uuid4()),
                 vector={
                     "dense": vector,
@@ -101,7 +129,11 @@ async def _process_document(
     # ── Document validation ──────────────────────────────────────────────────
     ok, reason = validate_document(document)
     if not ok:
-        logger.warning(f"[v3] Document validation failed: {reason} | '{document.title[:60]}'")
+        logger.warning(
+            "[v3] Document validation failed: %s | '%s'",
+            reason,
+            document.title[:60],
+        )
         metrics.documents_failed_validation += 1
         return
 
@@ -111,7 +143,11 @@ async def _process_document(
         db, document, title_similarity_threshold=settings.dedup_title_similarity
     )
     if dup:
-        logger.info(f"[v3] Duplicate skipped: '{document.title[:60]}' (matches {existing_id})")
+        logger.info(
+            "[v3] Duplicate skipped: '%s' (matches %s)",
+            document.title[:60],
+            existing_id,
+        )
         document.is_duplicate = True
         document.duplicate_of = existing_id
         metrics.documents_skipped_duplicate += 1
@@ -133,14 +169,16 @@ async def _process_document(
     # ── Hierarchical chunking ────────────────────────────────────────────────
     text_chunks = chunk_text_v2(document.content)
     if not text_chunks:
-        logger.warning(f"[v3] No chunks produced for: '{document.title[:60]}'")
+        logger.warning("[v3] No chunks produced for: '%s'", document.title[:60])
         return
 
     # ── Build ChunkRecord objects ────────────────────────────────────────────
     chunk_records: list[ChunkRecord] = []
     for text_chunk in text_chunks:
         entities = extract_entities(text_chunk.text)
-        content_type, weight = classify_content_type(text_chunk.text, text_chunk.section)
+        content_type, weight = classify_content_type(
+            text_chunk.text, text_chunk.section
+        )
 
         # Skip noise at chunking stage
         if content_type == "noise":
@@ -188,7 +226,11 @@ async def _process_document(
     chunk_records, rejected = filter_valid_chunks(chunk_records)
     metrics.chunks_failed_validation += len(rejected)
     if rejected:
-        logger.debug(f"[v3] {len(rejected)} chunks rejected by validator for '{document.title[:60]}'")
+        logger.debug(
+            "[v3] %s chunks rejected by validator for '%s'",
+            len(rejected),
+            document.title[:60],
+        )
 
     if not chunk_records:
         return
@@ -215,12 +257,14 @@ async def _process_document(
 
         metrics.chunks_embedded += n_embedded
         logger.info(
-            f"[v3] Stored {n_embedded} chunks for '{document.title[:60]}' "
-            f"(quality_dropped={skipped_quality})"
+            "[v3] Stored %s chunks for '%s' (quality_dropped=%s)",
+            n_embedded,
+            document.title[:60],
+            skipped_quality,
         )
 
-    except Exception as exc:
-        logger.error(f"[v3] Embedding failed for '{document.title[:60]}': {exc}")
+    except (ValueError, TypeError, RuntimeError, OSError) as exc:
+        logger.error("[v3] Embedding failed for '%s': %s", document.title[:60], exc)
         metrics.embedding_errors += 1
 
 
@@ -245,14 +289,19 @@ async def run_pipeline_v3(
     metrics.documents_fetched = len(documents)
 
     if not documents:
-        logger.info(f"[v3] No documents provided (source={source_type})")
+        logger.info("[v3] No documents provided (source=%s)", source_type)
         metrics.finish(status="completed")
         return metrics.summary()
 
     db = get_db()
     monitor = IngestionMonitor(db)
 
-    logger.info(f"[v3] Starting pipeline run_id={run_id} source={source_type} docs={len(documents)}")
+    logger.info(
+        "[v3] Starting pipeline run_id=%s source=%s docs=%s",
+        run_id,
+        source_type,
+        len(documents),
+    )
 
     # Save initial run state
     await monitor.save_run(metrics)
@@ -264,8 +313,8 @@ async def run_pipeline_v3(
         async with semaphore:
             try:
                 await _process_document(doc, db, metrics)
-            except Exception as exc:
-                logger.error(f"[v3] Unhandled error for '{doc.title[:60]}': {exc}")
+            except (ValueError, TypeError, RuntimeError, OSError) as exc:
+                logger.error("[v3] Unhandled error for '%s': %s", doc.title[:60], exc)
                 metrics.embedding_errors += 1
 
     tasks = [_bounded(doc) for doc in documents]
@@ -275,7 +324,7 @@ async def run_pipeline_v3(
     await monitor.save_run(metrics)
     await monitor.alert_on_failure(metrics)
 
-    logger.info(f"[v3] Pipeline complete: {metrics.summary()}")
+    logger.info("[v3] Pipeline complete: %s", metrics.summary())
     return metrics.summary()
 
 
@@ -295,8 +344,10 @@ async def run_pipeline_v3_from_parser(
     parser = parser_cls(query=query, max_results=max_results, **parser_kwargs)
     source_type = parser.source_type
 
-    logger.info(f"[v3] Fetching from {source_type}: '{query}'")
+    logger.info("[v3] Fetching from %s: '%s'", source_type, query)
     documents = parser.parse()
-    logger.info(f"[v3] {source_type} returned {len(documents)} documents")
+    logger.info("[v3] %s returned %s documents", source_type, len(documents))
 
-    return await run_pipeline_v3(documents, source_type=source_type, concurrency=concurrency)
+    return await run_pipeline_v3(
+        documents, source_type=source_type, concurrency=concurrency
+    )

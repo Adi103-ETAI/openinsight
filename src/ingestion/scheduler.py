@@ -4,16 +4,10 @@ Runs scheduled ingestion jobs for all configured medical data sources.
 
 Uses APScheduler (AsyncIOScheduler) with cron triggers defined in Settings.
 Each source runs its own cron job so schedules can be tuned independently.
-
-Usage (from FastAPI lifespan or a standalone script):
-    from src.ingestion.scheduler import start_scheduler, stop_scheduler
-    scheduler = start_scheduler()
-    # ... application runs ...
-    stop_scheduler(scheduler)
 """
+
 from __future__ import annotations
 
-import asyncio
 from typing import Optional
 
 from loguru import logger
@@ -21,6 +15,7 @@ from loguru import logger
 try:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
+
     _APScheduler_available = True
 except ImportError:
     _APScheduler_available = False
@@ -39,8 +34,6 @@ from src.ingestion.pipeline_v3 import run_pipeline_v3_from_parser
 
 settings = get_settings()
 
-# ── Queries for scheduled ingestion ─────────────────────────────────────────
-# Broaden to cover major disease areas for global medical knowledge
 _PUBMED_QUERIES = [
     "hypertension treatment guidelines",
     "diabetes mellitus management",
@@ -94,7 +87,7 @@ async def _run_pubmed_sync() -> None:
             await run_pipeline_v3_from_parser(
                 PubMedParser, query, max_results=100, concurrency=3
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[scheduler] PubMed job failed for '{query}': {exc}")
 
 
@@ -105,7 +98,7 @@ async def _run_cochrane_sync() -> None:
             await run_pipeline_v3_from_parser(
                 CochraneParser, query, max_results=50, concurrency=2
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[scheduler] Cochrane job failed for '{query}': {exc}")
 
 
@@ -116,7 +109,7 @@ async def _run_who_sync() -> None:
             await run_pipeline_v3_from_parser(
                 WHOParser, query, max_results=30, concurrency=2
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[scheduler] WHO job failed for '{query}': {exc}")
 
 
@@ -127,7 +120,7 @@ async def _run_cdc_sync() -> None:
             await run_pipeline_v3_from_parser(
                 CDCParser, query, max_results=30, concurrency=2
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[scheduler] CDC job failed for '{query}': {exc}")
 
 
@@ -138,12 +131,11 @@ async def _run_statpearls_sync() -> None:
             await run_pipeline_v3_from_parser(
                 StatPearlsParser, query, max_results=20, concurrency=2
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"[scheduler] StatPearls job failed for '{query}': {exc}")
 
 
 def _parse_cron(cron_expr: str) -> dict:
-    """Parse a 5-field cron expression into APScheduler CronTrigger kwargs."""
     parts = cron_expr.strip().split()
     if len(parts) != 5:
         raise ValueError(f"Invalid cron expression: {cron_expr!r} (expected 5 fields)")
@@ -152,17 +144,12 @@ def _parse_cron(cron_expr: str) -> dict:
 
 
 def start_scheduler() -> Optional["AsyncIOScheduler"]:
-    """
-    Start the APScheduler AsyncIOScheduler with all ingestion jobs.
-    Returns the scheduler instance (or None if APScheduler is unavailable).
-    """
     if not _APScheduler_available:
-        logger.warning("[scheduler] APScheduler unavailable — scheduled sync disabled")
+        logger.warning("[scheduler] APScheduler unavailable - scheduled sync disabled")
         return None
 
     scheduler = AsyncIOScheduler()
 
-    # PubMed — weekly
     try:
         scheduler.add_job(
             _run_pubmed_sync,
@@ -172,10 +159,9 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
             replace_existing=True,
             misfire_grace_time=3600,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.error(f"[scheduler] Failed to schedule PubMed job: {exc}")
 
-    # Cochrane — monthly
     try:
         scheduler.add_job(
             _run_cochrane_sync,
@@ -185,10 +171,9 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
             replace_existing=True,
             misfire_grace_time=7200,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.error(f"[scheduler] Failed to schedule Cochrane job: {exc}")
 
-    # WHO — monthly
     try:
         scheduler.add_job(
             _run_who_sync,
@@ -198,10 +183,9 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
             replace_existing=True,
             misfire_grace_time=7200,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.error(f"[scheduler] Failed to schedule WHO job: {exc}")
 
-    # CDC — monthly
     try:
         scheduler.add_job(
             _run_cdc_sync,
@@ -211,10 +195,9 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
             replace_existing=True,
             misfire_grace_time=7200,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.error(f"[scheduler] Failed to schedule CDC job: {exc}")
 
-    # StatPearls — monthly (piggyback on CDC slot; both run at the same time)
     try:
         scheduler.add_job(
             _run_statpearls_sync,
@@ -224,7 +207,7 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
             replace_existing=True,
             misfire_grace_time=7200,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.error(f"[scheduler] Failed to schedule StatPearls job: {exc}")
 
     scheduler.start()
@@ -233,7 +216,6 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
 
 
 def stop_scheduler(scheduler: Optional["AsyncIOScheduler"]) -> None:
-    """Gracefully shut down the scheduler."""
     if scheduler is not None:
         scheduler.shutdown(wait=False)
         logger.info("[scheduler] Ingestion scheduler stopped")
