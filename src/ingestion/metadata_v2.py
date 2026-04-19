@@ -248,10 +248,11 @@ class MetadataEnricherV2:
     ]
 
     def enrich_document(self, doc: Any, source: str) -> dict[str, Any]:
-        title = self._get_field(doc, "title", "")
-        abstract = self._get_field(doc, "abstract", "")
-        content = self._get_field(doc, "content", "")
-        journal = self._get_field(doc, "journal", "")
+        title = self._coerce_str(self._get_field(doc, "title", ""))
+        abstract = self._coerce_str(self._get_field(doc, "abstract", ""))
+        content = self._coerce_str(self._get_field(doc, "content", ""))
+        journal = self._coerce_str(self._get_field(doc, "journal", ""))
+        safe_source = self._coerce_str(source)
         full_text = "\n".join([title, abstract, content]).strip()
         text_lower = full_text.lower()
 
@@ -262,7 +263,7 @@ class MetadataEnricherV2:
         specialty = self._detect_specialties(text_lower)
         india_relevant, has_indian_data, indian_source = self._detect_india_relevance(
             text_lower=text_lower,
-            source=source,
+            source=safe_source,
             journal=journal,
         )
 
@@ -281,7 +282,7 @@ class MetadataEnricherV2:
         authors = self._coerce_str_list(self._get_field(doc, "authors", []))
 
         return {
-            "source": source,
+            "source": safe_source,
             "doc_type": doc_type,
             "evidence_level": evidence_level,
             "evidence_boost": evidence_boost,
@@ -454,3 +455,10 @@ class MetadataEnricherV2:
             text = value.strip()
             return [text] if text else []
         return []
+
+    def _coerce_str(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
