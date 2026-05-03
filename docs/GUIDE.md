@@ -179,7 +179,7 @@ Keys you need:
 docker compose ps
 
 # Test vector backend config
-python scripts/vector_backend_smoke.py
+python scripts/zilliz_smoke.py
 
 # Test MongoDB
 python -c "from pymongo import MongoClient; print(MongoClient('mongodb://localhost:27017').server_info()['version'])"
