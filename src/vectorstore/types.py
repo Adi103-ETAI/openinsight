@@ -9,11 +9,18 @@ class SparseVector:
     indices: list[int] = field(default_factory=list)
     values: list[float] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if len(self.indices) != len(self.values):
+            raise ValueError(
+                f"SparseVector indices and values must have the same length, "
+                f"got {len(self.indices)} indices and {len(self.values)} values"
+            )
+
     def is_empty(self) -> bool:
         return len(self.indices) == 0 or len(self.values) == 0
 
     def to_mapping(self) -> dict[int, float]:
-        return {int(i): float(v) for i, v in zip(self.indices, self.values, strict=False)}
+        return {int(i): float(v) for i, v in zip(self.indices, self.values, strict=True)}
 
     @classmethod
     def from_mapping(cls, mapping: dict[int, float]) -> "SparseVector":
