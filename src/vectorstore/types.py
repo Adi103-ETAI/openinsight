@@ -17,7 +17,7 @@ class SparseVector:
             )
 
     def is_empty(self) -> bool:
-        return len(self.indices) == 0 or len(self.values) == 0
+        return len(self.indices) == 0
 
     def to_mapping(self) -> dict[int, float]:
         return {int(i): float(v) for i, v in zip(self.indices, self.values, strict=True)}
