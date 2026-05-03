@@ -7,10 +7,9 @@
     "ghcr.io/devcontainers/features/node:1": { "version": "20" }
   },
 
-  "forwardPorts": [8000, 6333, 27017, 6379],
+  "forwardPorts": [8000, 27017, 6379],
   "portsAttributes": {
     "8000": { "label": "FastAPI" },
-    "6333": { "label": "Qdrant" },
     "27017": { "label": "MongoDB" },
     "6379": { "label": "Redis" }
   },

@@ -22,7 +22,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--recreate",
         action="store_true",
-        help="Recreate the v2 Qdrant collection before ingestion",
+        help="Recreate the v2 vector collection before ingestion",
     )
     parser.add_argument(
         "--batch-size",

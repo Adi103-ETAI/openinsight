@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
-
-from qdrant_client.http import models
-
 from src.core.config import get_settings
+from src.vectorstore.filters import FilterCondition, FilterExpression, FilterOperator
 
 
 class QueryIntent(str, Enum):
@@ -24,7 +21,7 @@ class QueryAnalysis:
     intent: QueryIntent
     entities: dict[str, list[str]]
     rewritten_query: str | None
-    metadata_filters: list[Any]
+    metadata_filters: FilterExpression | None
     use_hyde: bool
     expanded_terms: list[str]
 
@@ -176,34 +173,38 @@ class QueryUnderstanding:
 
     def _infer_metadata_filters(
         self, query_lower: str, intent: QueryIntent
-    ) -> list[Any]:
-        conditions: list[Any] = []
+    ) -> FilterExpression | None:
+        conditions: list[FilterCondition] = []
 
         if any(
             word in query_lower
             for word in ["recent", "latest", "current", "2024", "2025"]
         ):
             conditions.append(
-                models.FieldCondition(key="year", range=models.Range(gte=2020))
+                FilterCondition(
+                    field="year",
+                    operator=FilterOperator.GTE,
+                    value=2020,
+                )
             )
 
         if any(
             word in query_lower for word in ["guideline", "recommendation", "protocol"]
         ):
             conditions.append(
-                models.FieldCondition(
-                    key="doc_type",
-                    match=models.MatchAny(
-                        any=["guideline", "systematic_review", "meta_analysis"]
-                    ),
+                FilterCondition(
+                    field="doc_type",
+                    operator=FilterOperator.IN,
+                    value=["guideline", "systematic_review", "meta_analysis"],
                 )
             )
 
         if any(word in query_lower for word in ["india", "indian", "indians"]):
             conditions.append(
-                models.FieldCondition(
-                    key="india_relevant",
-                    match=models.MatchValue(value=True),
+                FilterCondition(
+                    field="india_relevant",
+                    operator=FilterOperator.EQ,
+                    value=True,
                 )
             )
 
@@ -211,13 +212,16 @@ class QueryUnderstanding:
             word in query_lower for word in ["dose", "dosage"]
         ):
             conditions.append(
-                models.FieldCondition(
-                    key="has_drug_dosing",
-                    match=models.MatchValue(value=True),
+                FilterCondition(
+                    field="has_drug_dosing",
+                    operator=FilterOperator.EQ,
+                    value=True,
                 )
             )
 
-        return conditions
+        if not conditions:
+            return None
+        return FilterExpression.from_conditions(conditions)
 
     def _expand_query(self, query_lower: str) -> list[str]:
         expanded_terms: list[str] = []

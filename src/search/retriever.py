@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
 
 from src.core.config import get_settings
 from src.ingestion.embedder_v2 import DualEmbedderV2
+from src.vectorstore.registry import get_vector_store
+from src.vectorstore.types import ScoredPoint, SparseVector
 
 
 @dataclass
@@ -24,17 +24,11 @@ class RetrievedChunk:
 
 
 class HybridRetriever:
-    def __init__(self, qdrant_url: str | None = None):
+    def __init__(self):
         settings = get_settings()
         self.settings = settings
-        if settings.qdrant_api_key:
-            self.client = QdrantClient(
-                url=qdrant_url or settings.qdrant_url,
-                api_key=settings.qdrant_api_key,
-            )
-        else:
-            self.client = QdrantClient(url=qdrant_url or settings.qdrant_url)
-        self.collection = settings.qdrant_collection_v2
+        self.collection = settings.vector_collection_v2
+        self.vector_store = get_vector_store()
         self.embedder = DualEmbedderV2(settings.dense_model_name)
 
     async def retrieve(
@@ -61,76 +55,46 @@ class HybridRetriever:
             ),
         )
 
-        qdrant_filter = self._build_filter(query_analysis.metadata_filters)
+        sparse_query = SparseVector.from_index_values(
+            indices=[int(i) for i in sparse_vector.get("indices", [])],
+            values=[float(v) for v in sparse_vector.get("values", [])],
+        )
 
         dense_results, sparse_results = await asyncio.gather(
-            self._dense_search(dense_embedding, qdrant_filter, top_k),
-            self._sparse_search(sparse_vector, qdrant_filter, top_k),
-        )
-        return dense_results, sparse_results
-
-    async def _dense_search(
-        self,
-        embedding: Any,
-        qdrant_filter: models.Filter | None,
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: self.client.search(
-                collection_name=self.collection,
-                query_vector=models.NamedVector(
-                    name="dense",
-                    vector=(
-                        embedding.tolist()
-                        if hasattr(embedding, "tolist")
-                        else list(embedding)
+            loop.run_in_executor(
+                None,
+                lambda: self.vector_store.search_dense(
+                    dense_vector=(
+                        dense_embedding.tolist()
+                        if hasattr(dense_embedding, "tolist")
+                        else list(dense_embedding)
                     ),
+                    top_k=top_k,
+                    filters=query_analysis.metadata_filters,
+                    collection_name=self.collection,
                 ),
-                query_filter=qdrant_filter,
-                limit=top_k,
-                with_payload=True,
+            ),
+            loop.run_in_executor(
+                None,
+                lambda: self.vector_store.search_sparse(
+                    sparse_vector=sparse_query,
+                    top_k=top_k,
+                    filters=query_analysis.metadata_filters,
+                    collection_name=self.collection,
+                ),
             ),
         )
-        return [self._to_chunk(result, "dense") for result in results]
-
-    async def _sparse_search(
-        self,
-        sparse_vector: dict[str, list[int] | list[float]],
-        qdrant_filter: models.Filter | None,
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: self.client.search(
-                collection_name=self.collection,
-                query_vector=models.NamedSparseVector(
-                    name="sparse",
-                    vector=models.SparseVector(
-                        indices=[int(i) for i in sparse_vector.get("indices", [])],
-                        values=[float(v) for v in sparse_vector.get("values", [])],
-                    ),
-                ),
-                query_filter=qdrant_filter,
-                limit=top_k,
-                with_payload=True,
-            ),
+        return (
+            [self._to_chunk(point, "dense") for point in dense_results],
+            [self._to_chunk(point, "sparse") for point in sparse_results],
         )
-        return [self._to_chunk(result, "sparse") for result in results]
 
-    def _build_filter(self, conditions: list[Any]) -> models.Filter | None:
-        if not conditions:
-            return None
-        return models.Filter(must=conditions)
-
-    def _to_chunk(self, qdrant_result: Any, source: str) -> RetrievedChunk:
-        payload = qdrant_result.payload or {}
+    def _to_chunk(self, point: ScoredPoint, source: str) -> RetrievedChunk:
+        payload = point.payload or {}
         return RetrievedChunk(
-            chunk_id=payload.get("chunk_id", str(qdrant_result.id)),
+            chunk_id=payload.get("chunk_id", point.point_id),
             doc_id=payload.get("doc_id", ""),
-            score=float(getattr(qdrant_result, "score", 0.0) or 0.0),
+            score=float(point.score),
             text=payload.get("raw_text", "") or payload.get("chunk_text", ""),
             contextual_text=payload.get("contextual_text", ""),
             metadata=payload,
@@ -164,3 +128,4 @@ class HybridRetriever:
                 return (choices[0].get("text") or "").strip() or None
         except (httpx.HTTPError, RuntimeError, ValueError, TypeError):
             return None
+

@@ -53,7 +53,7 @@ class DocumentRecord(BaseModel):
 
 # ── Chunk model ──────────────────────────────────────────────────────────────
 class ChunkRecord(BaseModel):
-    """A passage-level chunk, ready to be embedded and stored in Qdrant."""
+    """A passage-level chunk, ready to be embedded and stored in vector DB."""
     document_id: str          # ref to DocumentRecord._id
     source_type: str
     title: str
@@ -62,7 +62,7 @@ class ChunkRecord(BaseModel):
     condition_tags: list[str] = Field(default_factory=list)
     specialty_tags: list[str] = Field(default_factory=list)
     char_count: int = 0
-    embedded: bool = False    # flipped to True once stored in Qdrant
+    embedded: bool = False    # flipped to True once stored in vector DB
     embedded_at: Optional[datetime] = None
     section: Optional[str] = None
     diseases: list[str] = Field(default_factory=list)

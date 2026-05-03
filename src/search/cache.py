@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from enum import Enum
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -29,7 +30,7 @@ class SearchCache:
         return f"openinsight:{self.cache_version}:{operation}:{digest}"
 
     async def get_search_result(
-        self, query: str, filters: list[Any]
+        self, query: str, filters: Any
     ) -> dict[str, Any] | None:
         filters_json = json.dumps(self._json_safe(filters), sort_keys=True)
         key = self._make_key("search", query.lower().strip(), filters_json)
@@ -39,7 +40,7 @@ class SearchCache:
     async def set_search_result(
         self,
         query: str,
-        filters: list[Any],
+        filters: Any,
         result: dict[str, Any],
         ttl: int | None = None,
     ) -> None:
@@ -84,9 +85,13 @@ class SearchCache:
         return await self.redis.delete(*keys)
 
     def _json_safe(self, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
         if isinstance(value, dict):
             return {k: self._json_safe(v) for k, v in value.items()}
         if isinstance(value, list):
+            return [self._json_safe(v) for v in value]
+        if isinstance(value, tuple):
             return [self._json_safe(v) for v in value]
         if hasattr(value, "dict"):
             return self._json_safe(value.dict())

@@ -1,6 +1,6 @@
 """
 Ingestion package — lazy imports to avoid heavy transitive dependencies
-at collection time (qdrant-client, sentence-transformers, etc.).
+at collection time (vector backend SDKs, sentence-transformers, etc.).
 """
 
 __all__ = [
