@@ -23,7 +23,7 @@ torch==2.4.1
 numpy==1.26.4
 
 # Vector DB
-qdrant-client==1.11.3
+pymilvus>=2.5,<2.6
 
 # LLM & RAG
 langchain==0.3.3

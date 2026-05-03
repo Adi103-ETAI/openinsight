@@ -126,7 +126,7 @@ class DualEmbedderV2:
 
         tf = Counter(tokens)
         total_tokens = len(tokens)
-        # Qdrant sparse vectors require unique indices; hash collisions can
+        # Sparse vector backends require unique indices; hash collisions can
         # produce duplicates, so merge weights by index.
         weight_by_index: dict[int, float] = defaultdict(float)
 

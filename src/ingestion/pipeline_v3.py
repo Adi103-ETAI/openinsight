@@ -8,7 +8,6 @@ logic, progress tracking, and cost-optimised rate limiting.
 
 import asyncio
 from datetime import datetime
-import importlib
 import logging
 from uuid import uuid4
 
@@ -43,6 +42,7 @@ from src.ingestion.vector_db import (
     upsert_chunks,
 )
 from src.utils.chunker_v2 import chunk_text_v2
+from src.vectorstore.types import SparseVector, VectorPoint
 
 logger = logging.getLogger(__name__)
 
@@ -59,32 +59,20 @@ async def _embed_and_store(
     chunk_mongo_ids: list[str],
     _metrics: RunMetrics,
 ) -> int:
-    """Embed chunk texts and upsert to Qdrant. Returns number of points stored."""
+    """Embed chunk texts and upsert to vector DB. Returns number of points stored."""
     texts = [c.chunk_text for c in chunk_records]
     embeddings = embed_texts(texts)
 
     ensure_collection()
 
-    try:
-        point_struct_cls = getattr(
-            importlib.import_module("qdrant_client.models"), "PointStruct"
-        )
-    except (ImportError, AttributeError) as exc:
-        raise RuntimeError(f"Qdrant PointStruct unavailable: {exc}") from exc
-
-    points = []
+    points: list[VectorPoint] = []
     for chunk, vector, mongo_id in zip(chunk_records, embeddings, chunk_mongo_ids):
         sparse_vec = build_sparse_vector(chunk.chunk_text)
         points.append(
-            point_struct_cls(
-                id=str(uuid4()),
-                vector={
-                    "dense": vector,
-                    "sparse": {
-                        "indices": list(sparse_vec.keys()),
-                        "values": list(sparse_vec.values()),
-                    },
-                },
+            VectorPoint(
+                point_id=f"{mongo_id}_{chunk.chunk_index}",
+                dense_vector=[float(v) for v in vector],
+                sparse_vector=SparseVector.from_mapping(sparse_vec),
                 payload={
                     "mongo_id": mongo_id,
                     "source_type": chunk.source_type,
@@ -241,7 +229,7 @@ async def _process_document(
     chunk_mongo_ids = [str(cid) for cid in insert_many_result.inserted_ids]
     metrics.chunks_created += len(chunk_mongo_ids)
 
-    # ── Embed and store in Qdrant ────────────────────────────────────────────
+    # ── Embed and store in vector DB ─────────────────────────────────────────
     try:
         n_embedded = await _embed_and_store(chunk_records, chunk_mongo_ids, metrics)
 

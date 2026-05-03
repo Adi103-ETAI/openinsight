@@ -23,9 +23,9 @@ def _import_attr(module_name: str, attr_name: str):
 
 
 async def clear_v1_data():
-    """Remove all v1-ingested ICMR documents and their chunks from MongoDB and Qdrant."""
+    """Remove all v1-ingested ICMR documents and their chunks from MongoDB and vector DB."""
     get_db = _import_attr("src.ingestion.document_db", "get_db")
-    get_qdrant = _import_attr("src.ingestion.vector_db", "get_qdrant")
+    drop_collection = _import_attr("src.ingestion.vector_db", "drop_collection")
     get_settings = _import_attr("src.core.config", "get_settings")
 
     settings = get_settings()
@@ -54,10 +54,9 @@ async def clear_v1_data():
     )
     logger.info("Deleted %s v1 chunks", chunk_result.deleted_count)
 
-    # Clear Qdrant collection entirely and recreate
-    client = get_qdrant()
-    client.delete_collection(settings.qdrant_collection)
-    logger.info("Qdrant collection cleared")
+    # Clear vector collection entirely and recreate
+    drop_collection(collection_name=settings.vector_collection)
+    logger.info("Vector collection cleared")
 
 
 async def main():

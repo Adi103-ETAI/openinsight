@@ -89,7 +89,7 @@ class ChunkMetadataV2:
 
     evidence_boost: float = 1.0
 
-    def to_qdrant_payload(self) -> dict[str, Any]:
+    def to_vector_payload(self) -> dict[str, Any]:
         return {
             "doc_id": self.doc_id,
             "chunk_id": self.chunk_id,

@@ -49,7 +49,7 @@ The system has two major pipelines:
 │  ICMR PDFs ──┐                                                  │
 │  PubMed API ─┼──► Parsing/ETL ──► MongoDB (Document DB)         │
 │  State docs ─┘         │                                        │
-│                         └──► Chunker ──► Embedder ──► Qdrant    │
+│                         └──► Chunker ──► Embedder ──► Vector DB │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -59,7 +59,7 @@ The system has two major pipelines:
 │       │                                                         │
 │       ├── Standard Search ──► Embed query                       │
 │       │                           │                             │
-│       │                    Qdrant semantic search               │
+│       │                    Milvus/Zilliz semantic search        │
 │       │                           │                             │
 │       │                    Top-K chunks retrieved               │
 │       │                           │                             │
@@ -73,7 +73,7 @@ The system has two major pipelines:
 │                               │                                 │
 │                        Multiple sub-queries                     │
 │                               │                                 │
-│                        Parallel Qdrant searches                 │
+│                        Parallel vector searches                 │
 │                               │                                 │
 │                        Result Synthesis                         │
 │                               │                                 │
@@ -88,7 +88,7 @@ The system has two major pipelines:
 Every decision here was made deliberately. Here is what we use and why.
 
 ### Language: Python 3.11
-Every library we need — LangChain, HuggingFace, Qdrant, FastAPI, NCBI Entrez — is Python-native. No other language comes close for AI/ML work.
+Every library we need — LangChain, HuggingFace, Milvus SDK, FastAPI, NCBI Entrez — is Python-native. No other language comes close for AI/ML work.
 
 ### Backend: FastAPI
 Async, fast, auto-generates API docs at `/docs`, and Pydantic integration is seamless. This is what most production AI APIs use.
@@ -105,12 +105,12 @@ Stores the raw and parsed documents before they go into the vector index. MongoD
 - Motor (async MongoDB driver) plays well with FastAPI
 - Free tier on Railway for deployment
 
-### Vector DB: Qdrant
+### Vector DB: Milvus (Zilliz Cloud)
 Stores embeddings of document chunks for semantic search. Chosen over FAISS (our Colab prototype) because:
 - **Payload filtering** — we can query "find top chunks where source_type = icmr AND condition_tag = dengue"
 - **Hybrid search** — vector similarity + keyword search combined. Critical for exact drug names
 - **Persistent storage** — index survives restarts unlike in-memory FAISS
-- **Docker-native** — runs as a container locally and deploys the same way on Railway
+- **Managed cloud option** — Zilliz Cloud removes local ops overhead
 
 ### LLM: Llama 3.1 70B via NVIDIA NIM
 We call this as an API — no GPU needed on our side. NIM gives us OpenAI-compatible endpoints so the LangChain integration is plug-and-play.
@@ -122,7 +122,7 @@ Medical queries repeat. "First-line treatment for TB" will get asked hundreds of
 Full VS Code in the browser, persistent storage, Git built in. Since we call NVIDIA NIM as an API, we don't need a GPU on our dev machine. Student Pack gives 180 core-hours/month free — plenty.
 
 ### Deployment: Railway
-Deploys Python/FastAPI directly from GitHub. Managed Postgres and Redis add-ons. Persistent volumes for Qdrant. Simple.
+Deploys Python/FastAPI directly from GitHub. Managed MongoDB and Redis plus external vector DB endpoint. Simple.
 
 ---
 
@@ -156,7 +156,7 @@ GitHub will:
 - Spin up a container using `.devcontainer/devcontainer.json`
 - Run `.devcontainer/setup.sh` automatically
 - Install all Python dependencies from `requirements.txt`
-- Start Qdrant, MongoDB, and Redis via Docker Compose
+- Start MongoDB and Redis via Docker Compose
 - Install all VS Code extensions
 
 This takes about 3-4 minutes the first time.
@@ -178,8 +178,8 @@ Keys you need:
 # Check Docker services
 docker compose ps
 
-# Test Qdrant
-curl http://localhost:6333/healthz
+# Test vector backend config
+python scripts/vector_backend_smoke.py
 
 # Test MongoDB
 python -c "from pymongo import MongoClient; print(MongoClient('mongodb://localhost:27017').server_info()['version'])"
@@ -211,7 +211,7 @@ openinsight/
 │   ├── ingestion/
 │   │   ├── __init__.py
 │   │   ├── document_db.py      # MongoDB client + document/chunk models
-│   │   ├── vector_db.py        # Qdrant client + search/upsert helpers
+│   │   ├── vector_db.py        # Vector store compatibility helpers
 │   │   ├── embeddings.py       # PubMedBERT loader + embed_texts(), embed_query()
 │   │   ├── parsers/            # (coming) icmr.py, pubmed.py, pdf.py
 │   │   └── pipeline.py         # (coming) orchestrates parse → chunk → embed → store
@@ -244,7 +244,7 @@ openinsight/
 ├── docs/
 │   └── GUIDE.md                # This file
 │
-├── docker-compose.yml          # Qdrant + MongoDB + Redis
+├── docker-compose.yml          # MongoDB + Redis (+GROBID)
 ├── requirements.txt            # All Python dependencies
 ├── .env.example                # Template — copy to .env and fill in keys
 ├── .env                        # Your actual keys (gitignored)
@@ -261,8 +261,8 @@ Understanding why we have two separate databases is important.
 
 **What it stores:** The actual content of every document we ingest — full text of ICMR PDFs, PubMed paper abstracts and metadata, guideline sections.
 
-**Why MongoDB and not just Qdrant?**
-Qdrant stores vectors and small payloads. You cannot store a full 40-page ICMR guideline PDF in Qdrant — it's not built for that. MongoDB is where the source of truth lives. When a doctor asks a question and we need to return a citation, we look up the full document in MongoDB to render the citation properly.
+**Why MongoDB and not just Vector DB?**
+The vector DB stores vectors and retrieval payloads. You cannot store a full 40-page ICMR guideline PDF as your document source of truth in a vector index. MongoDB is where the source of truth lives. When a doctor asks a question and we need to return a citation, we look up the full document in MongoDB to render the citation properly.
 
 **Collections:**
 
@@ -272,13 +272,13 @@ Qdrant stores vectors and small payloads. You cannot store a full 40-page ICMR g
 | `chunks` | Passage-level splits of each document, ready for embedding |
 | `sources` | Metadata about each knowledge source (last updated, doc count) |
 
-### Qdrant — Vector Database
+### Milvus/Zilliz — Vector Database
 
 **What it stores:** Float vectors (768 dimensions) representing the semantic meaning of each chunk, plus a small payload (chunk_id, source_type, title, condition_tags).
 
-**Why Qdrant and not FAISS?**
+**Why Milvus/Zilliz and not FAISS?**
 
-| Feature | FAISS (old) | Qdrant (new) |
+| Feature | FAISS (old) | Milvus/Zilliz |
 |---|---|---|
 | Persistence | Manual save/load | Built-in |
 | Metadata filtering | None | Full payload filter |
@@ -286,13 +286,13 @@ Qdrant stores vectors and small payloads. You cannot store a full 40-page ICMR g
 | Scalability | Single process | Production-ready |
 | API | Python only | REST + Python |
 
-**How they connect:** Every chunk in MongoDB has a corresponding point in Qdrant. The Qdrant point payload contains the MongoDB `_id` so we can look up the full text after retrieval.
+**How they connect:** Every chunk in MongoDB has a corresponding point in the vector DB. The vector payload contains the MongoDB `_id` so we can look up the full text after retrieval.
 
 ```
-MongoDB chunk._id  ←──────────────────► Qdrant point.payload.mongo_id
-MongoDB chunk.text                       Qdrant point.vector (768 floats)
-MongoDB chunk.source_type                Qdrant point.payload.source_type
-MongoDB chunk.title                      Qdrant point.payload.title
+MongoDB chunk._id  ←──────────────────► Vector point.payload.mongo_id
+MongoDB chunk.text                       Vector point.vector (768 floats)
+MongoDB chunk.source_type                Vector point.payload.source_type
+MongoDB chunk.title                      Vector point.payload.title
 ```
 
 ---
@@ -322,7 +322,7 @@ Source document
   Embedder        ← PubMedBERT generates 768-dim vector per chunk
       │
       ▼
-  Qdrant          ← upserts vector + payload, marks chunk embedded=True
+  Vector DB       ← upserts vector + payload, marks chunk embedded=True
 ```
 
 ### Source types we need to ingest
@@ -475,8 +475,10 @@ jobs:
 | `NVIDIA_NIM_BASE_URL` | No | Default: NVIDIA's endpoint |
 | `MONGODB_URL` | No | Default: localhost:27017 |
 | `MONGODB_DB` | No | Default: openinsight |
-| `QDRANT_URL` | No | Default: localhost:6333 |
-| `QDRANT_COLLECTION` | No | Default: openinsight_chunks |
+| `VECTOR_BACKEND` | No | Default: milvus |
+| `VECTOR_URI` | Yes | Milvus/Zilliz endpoint URI |
+| `VECTOR_TOKEN` | Yes | Milvus/Zilliz token or API key |
+| `VECTOR_COLLECTION` | No | Default: openinsight_chunks |
 | `REDIS_URL` | No | Default: localhost:6379 |
 | `NCBI_API_KEY` | Recommended | Rate limit: 3 req/s without, 10 with |
 | `NCBI_EMAIL` | Yes | Required by NCBI Entrez policy |
@@ -494,7 +496,6 @@ docker compose up -d
 docker compose down
 
 # View service logs
-docker compose logs qdrant -f
 docker compose logs mongodb -f
 
 # Start FastAPI dev server
@@ -503,8 +504,8 @@ uvicorn src.api.main:app --reload --port 8000
 # Run tests
 pytest tests/ -v
 
-# Check Qdrant collections
-curl http://localhost:6333/collections
+# Run vector backend smoke check
+python scripts/vector_backend_smoke.py
 
 # Check MongoDB collections
 mongosh openinsight --eval "db.getCollectionNames()"
@@ -527,7 +528,7 @@ docker compose down && docker compose up -d --build
 - Never commit `.env` — it is in `.gitignore`
 - The `data/` folder is gitignored — ICMR PDFs are large and should not be in the repo. Store them in the Codespace and later in Railway volumes or an S3 bucket
 - When you first open the Codespace, `setup.sh` runs automatically. If something fails, run `bash .devcontainer/setup.sh` manually in the terminal
-- Qdrant data persists in a Docker volume (`qdrant_data`). If you want to reset the vector index: `docker compose down -v && docker compose up -d`
+- Mongo and Redis data persist in Docker volumes. If you want to reset local state: `docker compose down -v && docker compose up -d`
 
 ---
 

@@ -16,7 +16,7 @@ from src.ingestion.mongo_store_v2 import MongoDocStoreV2
 from src.ingestion.parsers.grobid import GROBIDParser
 from src.ingestion.parsers.icmr import ICMRParser
 from src.ingestion.parsers.ocr import OCRParser
-from src.ingestion.qdrant_indexer_v2 import QdrantIndexerV2
+from src.ingestion.vector_indexer_v2 import VectorIndexerV2
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class IngestionPipelineV4:
     v2 ingestion orchestrator for local directories.
 
     Flow:
-    parse -> enrich metadata -> chunk -> embed -> qdrant upsert -> mongo store
+    parse -> enrich metadata -> chunk -> embed -> vector upsert -> mongo store
     """
 
     def __init__(self) -> None:
@@ -37,10 +37,7 @@ class IngestionPipelineV4:
             dense_model_name=self.settings.dense_model_name
             or self.settings.embedding_model
         )
-        self.indexer = QdrantIndexerV2(
-            qdrant_url=self.settings.qdrant_url,
-            qdrant_api_key=self.settings.qdrant_api_key,
-        )
+        self.indexer = VectorIndexerV2()
         self.mongo = MongoDocStoreV2(
             mongo_url=self.settings.mongodb_url,
             db_name=self.settings.mongodb_db,
@@ -69,7 +66,7 @@ class IngestionPipelineV4:
 
         self.indexer.create_collection(
             recreate=recreate_index,
-            collection_name=self.settings.qdrant_collection_v2,
+            collection_name=self.settings.vector_collection_v2,
         )
 
         summary = {
@@ -120,7 +117,7 @@ class IngestionPipelineV4:
                     )
                     chunk.chunk_index = idx
                     chunk.total_chunks = total_chunks
-                    chunk.metadata = chunk_meta.to_qdrant_payload()
+                    chunk.metadata = chunk_meta.to_vector_payload()
 
                 docs_for_batch.append({"doc": normalized, "enriched": enriched})
                 chunks_for_batch.extend(chunks)
@@ -142,7 +139,7 @@ class IngestionPipelineV4:
                 chunks=chunks_for_batch,
                 dense_embeddings=dense_embeddings,
                 sparse_vectors=sparse_vectors,
-                collection_name=self.settings.qdrant_collection_v2,
+                collection_name=self.settings.vector_collection_v2,
             )
 
             for entry in docs_for_batch:

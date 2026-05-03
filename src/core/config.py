@@ -12,11 +12,19 @@ class Settings(BaseSettings):
     mongodb_url: str = "mongodb://localhost:27017"
     mongodb_db: str = "openinsight"
 
-    # Qdrant (supports local Docker and Qdrant Cloud)
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str = ""  # set for Qdrant Cloud; leave empty for local
-    qdrant_collection: str = "openinsight_chunks"
-    qdrant_collection_v2: str = "openinsight_v2"
+    # Vector DB (backend-agnostic app config; Milvus/Zilliz is current provider)
+    vector_backend: str = "milvus"
+    vector_uri: str = "http://localhost:19530"
+    vector_token: str = ""
+    vector_collection: str = "openinsight_chunks"
+    vector_collection_v2: str = "openinsight_v2"
+    vector_dim: int = 768
+    vector_id_field: str = "id"
+    vector_dense_field: str = "dense"
+    vector_sparse_field: str = "sparse"
+    vector_dense_metric: str = "COSINE"
+    vector_sparse_metric: str = "IP"
+    milvus_db_name: str = "default"
 
     # Redis
     redis_url: str = "redis://localhost:6379"
@@ -52,6 +60,12 @@ class Settings(BaseSettings):
     mmr_lambda: float = 0.7
     hyde_enabled: bool = True
 
+    # Phase 6 cutover and deprecation controls
+    query_default_pipeline: str = "v2"  # allowed: v2, legacy
+    enable_legacy_query: bool = True
+    query_auto_fallback_to_legacy: bool = True
+    enable_query_deprecation_headers: bool = True
+
     # Ingestion pipeline
     ingestion_batch_size: int = 50  # documents per batch
     ingestion_max_retries: int = 3  # retry attempts for failed documents
@@ -71,6 +85,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 @lru_cache()
