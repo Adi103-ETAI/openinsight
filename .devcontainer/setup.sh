@@ -5,7 +5,7 @@ echo "==> Installing Python dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-echo "==> Starting Docker services (MongoDB + Redis)..."
+echo "==> Starting Docker Compose services..."
 docker compose up -d
 
 echo "==> Waiting for services to be ready..."
