@@ -5,28 +5,51 @@ import hashlib
 import logging
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.core.config import get_settings
 from src.ingestion.chunker_v3 import HierarchicalChunkerV3
+from src.ingestion.dedupe import DocumentDeduplicator
 from src.ingestion.embedder_v2 import DualEmbedderV2
 from src.ingestion.metadata_v2 import MetadataEnricherV2
 from src.ingestion.mongo_store_v2 import MongoDocStoreV2
+from src.ingestion.monitoring import IngestionMonitor, RunMetrics
 from src.ingestion.parsers.grobid import GROBIDParser
 from src.ingestion.parsers.icmr import ICMRParser
 from src.ingestion.parsers.ocr import OCRParser
+from src.ingestion.quality import score_chunks
 from src.ingestion.vector_indexer_v2 import VectorIndexerV2
 
 logger = logging.getLogger(__name__)
 
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential
+except ImportError:
+    def retry(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+    def stop_after_attempt(_attempts):
+        return None
+    def wait_exponential(**_kwargs):
+        return None
+
 
 class IngestionPipelineV4:
     """
-    v2 ingestion orchestrator for local directories.
+    v4 ingestion orchestrator for local directories.
 
     Flow:
-    parse -> enrich metadata -> chunk -> embed -> vector upsert -> mongo store
+    parse -> dedup -> enrich metadata -> chunk -> quality score -> embed -> vector upsert -> mongo store -> monitor
+
+    Features from v3:
+    - Retry logic for embedding failures
+    - Quality scoring and filtering
+    - Run monitoring and metrics
+    - Document deduplication
     """
 
     def __init__(self) -> None:
@@ -42,6 +65,8 @@ class IngestionPipelineV4:
             mongo_url=self.settings.mongodb_url,
             db_name=self.settings.mongodb_db,
         )
+        self.deduplicator = DocumentDeduplicator(self.mongo)
+        self.monitor = IngestionMonitor(self.mongo.client[self.settings.mongodb_db])
 
     async def ingest_directory(
         self,
@@ -76,6 +101,8 @@ class IngestionPipelineV4:
             "chunks_created": 0,
             "chunks_indexed": 0,
             "files_failed": 0,
+            "chunks_deduped": 0,
+            "chunks_quality_filtered": 0,
         }
 
         if not files:
@@ -125,12 +152,52 @@ class IngestionPipelineV4:
             if not chunks_for_batch:
                 continue
 
+            # Deduplication check
+            original_count = len(chunks_for_batch)
+            chunks_to_process = []
+            seen_ids = set()
+            for chunk in chunks_for_batch:
+                should_skip, _ = await self.deduplicator.check_document(
+                    {"doc_id": chunk.doc_id, "title": getattr(chunk, 'title', ''), "content": getattr(chunk, 'text', '')},
+                    force_reindex=False
+                )
+                if not should_skip and chunk.chunk_id not in seen_ids:
+                    chunks_to_process.append(chunk)
+                    seen_ids.add(chunk.chunk_id)
+            
+            chunks_for_batch = chunks_to_process
+            summary["chunks_deduped"] = original_count - len(chunks_for_batch)
+
+            # Quality scoring (from v3)
+            if chunks_for_batch:
+                score_chunks(chunks_for_batch)
+                before_quality = len(chunks_for_batch)
+                chunks_for_batch = [
+                    c for c in chunks_for_batch 
+                    if c.quality_score >= self.settings.quality_score_threshold
+                ]
+                summary["chunks_quality_filtered"] = before_quality - len(chunks_for_batch)
+
+            if not chunks_for_batch:
+                continue
+
             contextual_texts = [c.contextual_text for c in chunks_for_batch]
-            dense_embeddings = await self._run_cpu(
-                self.embedder.embed_batch,
-                contextual_texts,
-                32,
-            )
+            
+            # Retry logic from v3
+            try:
+                dense_embeddings = await self._run_cpu(
+                    self.embedder.embed_batch,
+                    contextual_texts,
+                    32,
+                )
+            except Exception as e:
+                logger.warning(f"[v4] Embedding failed, retrying: {e}")
+                dense_embeddings = await self._run_cpu(
+                    self.embedder.embed_batch,
+                    contextual_texts,
+                    16,  # Smaller batch on retry
+                )
+            
             sparse_vectors = [
                 self.embedder.compute_sparse_vector(text) for text in contextual_texts
             ]
@@ -159,6 +226,24 @@ class IngestionPipelineV4:
             )
 
         summary["files_failed"] = summary["files_total"] - summary["files_parsed"]
+        
+        # Save metrics (from v3)
+        metrics = RunMetrics(
+            run_id=str(uuid4()),
+            source=source,
+            start_time=datetime.utcnow(),
+            end_time=datetime.utcnow(),
+            files_total=summary["files_total"],
+            files_parsed=summary["files_parsed"],
+            files_failed=summary["files_failed"],
+            docs_stored=summary["documents_stored"],
+            chunks_created=summary["chunks_created"],
+            chunks_indexed=summary["chunks_indexed"],
+            chunks_deduped=summary.get("chunks_deduped", 0),
+            chunks_quality_filtered=summary.get("chunks_quality_filtered", 0),
+        )
+        await self.monitor.save_run(metrics)
+        
         logger.info("[v4] Ingestion complete: %s", summary)
         return summary
 

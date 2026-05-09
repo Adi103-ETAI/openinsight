@@ -9,6 +9,8 @@ from loguru import logger
 from typing import Optional
 import re
 
+from src.core.config import get_settings
+
 
 DRUG_PATTERNS = [
     r"\b(?:doxycycline|azithromycin|rifampicin|isoniazid|pyrazinamide|ethambutol|"
@@ -94,11 +96,13 @@ OUTCOME_PATTERNS = [
 
 @lru_cache(maxsize=1)
 def _load_scispacy():
+    settings = get_settings()
+    model = settings.spacy_model
     try:
         import spacy
 
-        nlp = spacy.load("en_core_sci_sm")
-        logger.info("scispaCy model loaded successfully")
+        nlp = spacy.load(model)
+        logger.info(f"scispaCy model loaded: {model}")
         return nlp
     except Exception as e:
         logger.warning(f"scispaCy model not available, using rule-based NER: {e}")

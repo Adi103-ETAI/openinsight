@@ -3,16 +3,18 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # LLM
+    # ===================== LLM =====================
     nvidia_nim_api_key: str
     nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     nim_model: str = "meta/llama-3.1-70b-instruct"
+    nim_temperature: float = 0.1
+    nim_max_tokens: int = 1024
 
-    # MongoDB
+    # ===================== MongoDB =====================
     mongodb_url: str = "mongodb://localhost:27017"
     mongodb_db: str = "openinsight"
 
-    # Vector DB (backend-agnostic app config; Milvus/Zilliz is current provider)
+    # ===================== Vector DB =====================
     vector_backend: str = "milvus"
     vector_uri: str = "http://localhost:19530"
     vector_token: str = ""
@@ -26,60 +28,113 @@ class Settings(BaseSettings):
     vector_sparse_metric: str = "IP"
     milvus_db_name: str = "default"
 
-    # Redis
+    # ===================== Redis =====================
     redis_url: str = "redis://localhost:6379"
 
-    # PubMed / NCBI
+    # ===================== PubMed / NCBI =====================
     ncbi_api_key: str = ""
     ncbi_email: str = "sentarc.ai@gmail.com"
 
-    # Embeddings
+    # ===================== Embeddings & Reranker =====================
     embedding_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"
     embedding_dim: int = 768
     dense_model_name: str = "pritamdeka/S-PubMedBert-MS-MARCO"
     reranker_model_name: str = "BAAI/bge-reranker-base"
     grobid_url: str = "http://localhost:8070"
-    nim_temperature: float = 0.1
-    nim_max_tokens: int = 1024
+    
+    # NLP model for entity extraction (scispacy)
+    spacy_model: str = "en_core_sci_md"
+
+    # ===================== Embedding Processing =====================
+    embedding_batch_size: int = 32
+    embedding_retry_batch_size: int = 16
+    embedding_timeout: int = 60
+
+    # ===================== Retrieval =====================
     retrieval_top_k: int = 8
     retrieval_multiplier: int = 3
     retrieval_min_k: int = 20
     retrieval_max_k: int = 30
+
+    # ===================== Reranking =====================
     reranker_top_n: int = 8
     reranker_batch_size: int = 16
     reranker_max_chars: int = 1200
 
-    # v2 retrieval pipeline knobs (additive, backward-compatible)
+    # ===================== Caching =====================
     cache_version: str = "v2"
-    cache_ttl_search: int = 1800
-    cache_ttl_rerank: int = 3600
+    cache_ttl_search: int = 1800  # 30 minutes
+    cache_ttl_rerank: int = 3600  # 1 hour
+    cache_ttl_embedding: int = 1800  # 30 minutes
+
+    # ===================== Search Pipeline =====================
     top_k_retrieval: int = 50
     top_k_after_fusion: int = 20
     top_k_after_rerank: int = 8
     top_k_final: int = 6
     mmr_lambda: float = 0.7
     hyde_enabled: bool = True
+    rrf_k: int = 60  # Reciprocal Rank Fusion parameter
 
-    # Phase 6 cutover and deprecation controls
-    query_default_pipeline: str = "v2"  # allowed: v2, legacy
-    enable_legacy_query: bool = True
-    query_auto_fallback_to_legacy: bool = True
-    enable_query_deprecation_headers: bool = True
+    # ===================== Query Rewriting =====================
+    llm_query_rewrite: bool = True
+    query_rewrite_fallback: bool = True
+    query_rewrite_max_tokens: int = 64
+    query_rewrite_temperature: float = 0.0
+    hyde_timeout: float = 15.0
 
-    # Ingestion pipeline
-    ingestion_batch_size: int = 50  # documents per batch
-    ingestion_max_retries: int = 3  # retry attempts for failed documents
-    ingestion_retry_delay: float = 2.0  # seconds between retries
-    quality_score_threshold: float = 0.3  # drop chunks below this score
-    dedup_title_similarity: float = 0.9  # threshold for fuzzy title dedup
+    # ===================== DeepInsights / Agents =====================
+    deep_insights_enabled: bool = True
+    deep_insights_max_sub_queries: int = 6
+    deep_insights_sub_query_top_k: int = 8
+    deep_insights_timeout: int = 60
+    deep_insights_context_chars: int = 300
 
-    # Scheduler — cron-style (used by APScheduler)
-    scheduler_pubmed_cron: str = "0 2 * * 0"  # Sundays 02:00 UTC
-    scheduler_who_cron: str = "0 3 1 * *"  # 1st of month 03:00 UTC
-    scheduler_cdc_cron: str = "0 4 1 * *"  # 1st of month 04:00 UTC
-    scheduler_cochrane_cron: str = "0 5 1 * *"  # 1st of month 05:00 UTC
+    # ===================== Contradiction Detection =====================
+    contradiction_detection: bool = True
+    contradiction_min_chunks: int = 3
 
-    # App
+    # ===================== Distributed Ingestion =====================
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_concurrency: int = 4
+    ingestion_workers: int = 4
+    ingestion_batch_size: int = 10  # files per batch
+    ingestion_max_retries: int = 3
+    ingestion_retry_delay: float = 2.0
+    ingestion_thread_workers: int = 4
+    ingestion_max_chunks_per_doc: int = 100
+    parsing_thread_workers: int = 4
+
+    # ===================== Deduplication =====================
+    dedup_enabled: bool = True
+    dedup_title_similarity: float = 0.9
+    dedup_content_hash_length: int = 16
+    cache_key_prefix_length: int = 16
+
+    # ===================== Deduplication =====================
+    dedup_enabled: bool = True
+    dedup_title_similarity: float = 0.9
+    dedup_content_hash_length: int = 16
+
+    # ===================== Quality Scoring =====================
+    quality_score_threshold: float = 0.3
+    quality_high_value_patterns_count: int = 10
+    quality_low_value_penalty: float = 0.5
+
+    # ===================== Chunking =====================
+    chunk_target_tokens: int = 350
+    chunk_max_tokens: int = 500
+    chunk_overlap_tokens: int = 50
+    chunk_min_tokens: int = 80
+
+    # ===================== Scheduler =====================
+    scheduler_pubmed_cron: str = "0 2 * * 0"
+    scheduler_who_cron: str = "0 3 1 * *"
+    scheduler_cdc_cron: str = "0 4 1 * *"
+    scheduler_cochrane_cron: str = "0 5 1 * *"
+    scheduler_enabled: bool = True
+
+    # ===================== App =====================
     app_env: str = "development"
     log_level: str = "DEBUG"
 
