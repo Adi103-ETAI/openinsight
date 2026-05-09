@@ -5,7 +5,7 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src.core.config import get_settings
-from src.search.retriever import RetrievedChunk
+from .retriever import RetrievedChunk
 
 
 class CrossEncoderReranker:

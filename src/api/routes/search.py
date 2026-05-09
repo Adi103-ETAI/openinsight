@@ -4,19 +4,19 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from src.core.config import get_settings
 from src.query.prompts import SYSTEM_PROMPT
-from src.query.validator import enhance_response, validate_answer
-from src.search.cache import SearchCache
-from src.search.context_builder import assemble_context, build_citation_list
-from src.search.fusion import reciprocal_rank_fusion
-from src.search.mmr import maximal_marginal_relevance
-from src.search.query_understanding import QueryUnderstanding
-from src.search.reranker import CrossEncoderReranker
-from src.search.retriever import HybridRetriever
+from src.query.validation.validator import enhance_response, validate_answer
+from src.query.search.cache import SearchCache
+from src.query.search.context_builder import assemble_context, build_citation_list
+from src.query.search.fusion import reciprocal_rank_fusion
+from src.query.search.mmr import maximal_marginal_relevance
+from src.query.search.query_understanding import QueryUnderstanding
+from src.query.search.reranker import CrossEncoderReranker
+from src.query.search.retriever import HybridRetriever
+from src.utils.llm_client import get_nim_client
 
 router = APIRouter()
 settings = get_settings()
@@ -90,10 +90,7 @@ def _evidence_level_to_numeric(level: Any) -> int:
 
 
 async def _generate_answer(query: str, context: str) -> str:
-    client = AsyncOpenAI(
-        api_key=settings.nvidia_nim_api_key,
-        base_url=settings.nvidia_nim_base_url,
-    )
+    client = get_nim_client()
 
     prompt = (
         "Clinical context passages:\n\n"
@@ -102,8 +99,7 @@ async def _generate_answer(query: str, context: str) -> str:
         "Provide a concise, clinically actionable answer with numbered citations."
     )
 
-    response = await client.chat.completions.create(
-        model=settings.nim_model,
+    content = await client.chat_completions(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -111,7 +107,7 @@ async def _generate_answer(query: str, context: str) -> str:
         temperature=settings.nim_temperature,
         max_tokens=settings.nim_max_tokens,
     )
-    return response.choices[0].message.content or ""
+    return content or ""
 
 
 @router.post("", response_model=SearchResponse)

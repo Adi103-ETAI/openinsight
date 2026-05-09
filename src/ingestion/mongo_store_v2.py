@@ -4,6 +4,8 @@ import importlib
 from datetime import datetime
 from typing import Any, Optional
 
+from src.core.config import get_settings
+
 
 class MongoDocStoreV2:
     """
@@ -14,13 +16,14 @@ class MongoDocStoreV2:
     """
 
     def __init__(
-        self, mongo_url: str = "mongodb://localhost:27017", db_name: str = "openinsight"
+        self, mongo_url: str | None = None, db_name: str | None = None
     ):
+        settings = get_settings()
         motor_asyncio = importlib.import_module("motor.motor_asyncio")
         AsyncIOMotorClient = getattr(motor_asyncio, "AsyncIOMotorClient")
 
-        self.client = AsyncIOMotorClient(mongo_url)
-        self.db = self.client[db_name]
+        self.client = AsyncIOMotorClient(mongo_url or settings.mongodb_url)
+        self.db = self.client[db_name or settings.mongodb_db]
         self.documents = self.db["documents_v2"]
         self.chunks = self.db["chunks_v2"]
 

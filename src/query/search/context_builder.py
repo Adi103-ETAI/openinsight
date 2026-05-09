@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.search.retriever import RetrievedChunk
+from .retriever import RetrievedChunk
 
 
 EVIDENCE_LEVEL_LABELS = {

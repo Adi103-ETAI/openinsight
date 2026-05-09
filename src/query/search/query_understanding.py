@@ -89,7 +89,7 @@ class QueryUnderstanding:
         try:
             import spacy
 
-            self.nlp = spacy.load("en_core_sci_md")
+            self.nlp = spacy.load(self.settings.spacy_model)
         except (ImportError, OSError, RuntimeError, ValueError, TypeError):
             self.nlp = None
 

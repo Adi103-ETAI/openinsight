@@ -1,21 +1,22 @@
 # OpenInsight — Developer Guide
 **SentArc Labs | Pune, India**
-> This is your single reference for everything about building OpenInsight. Architecture decisions, how to set up your environment, how each component works, what to build next, and why things are structured the way they are.
+
+> This is your single reference for building OpenInsight. Architecture decisions, how to set up your environment, how each component works, and what to build next.
 
 ---
 
 ## Table of Contents
 1. [What We Are Building](#1-what-we-are-building)
 2. [Architecture Overview](#2-architecture-overview)
-3. [Tech Stack Decisions](#3-tech-stack-decisions)
-4. [Setting Up GitHub Codespaces](#4-setting-up-github-codespaces)
-5. [Project File Structure](#5-project-file-structure)
-6. [The Two Databases](#6-the-two-databases)
-7. [Data Ingestion Pipeline](#7-data-ingestion-pipeline)
-8. [Query Flow](#8-query-flow)
-9. [Development Phases](#9-development-phases)
-10. [Deployment](#10-deployment)
-11. [Environment Variables Reference](#11-environment-variables-reference)
+3. [Tech Stack](#3-tech-stack)
+4. [Project Structure](#4-project-structure)
+5. [Configuration](#5-configuration)
+6. [Constants & Magic Values](#6-constants--magic-values)
+7. [Query Pipeline](#7-query-pipeline)
+8. [DeepInsights Mode](#8-deepinsights-mode)
+9. [Data Ingestion](#9-data-ingestion)
+10. [API Endpoints](#10-api-endpoints)
+11. [Development](#11-development)
 12. [Useful Commands](#12-useful-commands)
 
 ---
@@ -24,512 +25,345 @@
 
 OpenInsight is a clinical decision support platform for Indian physicians. A doctor types a clinical question and gets a cited answer — grounded in ICMR guidelines, live PubMed research, and Indian clinical literature — in under 10 seconds.
 
-**The core problem it solves:**
-- UpToDate is expensive and built for US clinical contexts
-- ChatGPT has no citations and hallucinates drug dosages
-- Manual PubMed search is slow and returns papers, not answers
-- No existing tool knows what ICMR says about managing dengue in India
-
-**The two modes (mirroring OpenEvidence's architecture):**
-- **Standard Search** — fast single-pass RAG for straightforward queries
-- **DeepConsult** — multi-agent orchestration for complex cases (drug interactions, differential diagnosis, protocol conflicts)
-
-We are building the **prototype** first — no auth, no billing, just validating that the system works and produces good answers for Indian clinical queries.
+**Two query modes:**
+- **Simple Search** (`POST /search`) — Fast single-pass RAG for straightforward queries
+- **DeepInsights** (`POST /deep-insights`) — Multi-agent orchestration for complex cases (drug interactions, differential diagnosis, protocol conflicts)
 
 ---
 
 ## 2. Architecture Overview
 
-The system has two major pipelines:
-
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ INGESTION PIPELINE                                              │
-│                                                                 │
-│  ICMR PDFs ──┐                                                  │
-│  PubMed API ─┼──► Parsing/ETL ──► MongoDB (Document DB)         │
-│  State docs ─┘         │                                        │
-│                         └──► Chunker ──► Embedder ──► Vector DB │
+│                         API LAYER                               │
+│  POST /search          POST /deep-insights                      │
 └─────────────────────────────────────────────────────────────────┘
-
+                              │
+         ┌────────────────────┼────────────────────┐
+         ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  query/search/  │  │  query/agents/  │  │  ingestion/     │
+│   Simple RAG    │  │  DeepInsights   │  │  Data Pipeline  │
+│                 │  │                 │  │                 │
+│ - retriever    │  │ - intent_router │  │ - pipeline_v4   │
+│ - fusion       │  │ - query_decomp  │  │ - chunker_v3   │
+│ - reranker     │  │ - orchestrator │  │ - embedder_v2  │
+│ - mmr          │  │                 │  │ - parsers      │
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ QUERY PIPELINE                                                  │
-│                                                                 │
-│  Doctor query                                                   │
-│       │                                                         │
-│       ├── Standard Search ──► Embed query                       │
-│       │                           │                             │
-│       │                    Milvus/Zilliz semantic search        │
-│       │                           │                             │
-│       │                    Top-K chunks retrieved               │
-│       │                           │                             │
-│       │                    Prompt construction                  │
-│       │                           │                             │
-│       │                    Llama 3.1 70B (NIM)                  │
-│       │                           │                             │
-│       │                    Answer + Citations                   │
-│       │                                                         │
-│       └── DeepConsult ──► Agent Orchestrator                    │
-│                               │                                 │
-│                        Multiple sub-queries                     │
-│                               │                                 │
-│                        Parallel vector searches                 │
-│                               │                                 │
-│                        Result Synthesis                         │
-│                               │                                 │
-│                        Deep Answer + Citations                  │
+│                     DATA LAYER                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │   MongoDB    │  │   Milvus     │  │    Redis     │       │
+│  │ (Documents)  │  │  (Vectors)   │  │   (Cache)    │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Tech Stack Decisions
+## 3. Tech Stack
 
-Every decision here was made deliberately. Here is what we use and why.
-
-### Language: Python 3.11
-Every library we need — LangChain, HuggingFace, Milvus SDK, FastAPI, NCBI Entrez — is Python-native. No other language comes close for AI/ML work.
-
-### Backend: FastAPI
-Async, fast, auto-generates API docs at `/docs`, and Pydantic integration is seamless. This is what most production AI APIs use.
-
-### Embeddings: `pritamdeka/S-PubMedBert-MS-MARCO`
-This model is trained specifically on PubMed text with retrieval fine-tuning on top. The quality jump over general-purpose models (like `all-MiniLM-L6-v2` from our Colab prototype) is significant for medical queries. It understands that "TB" and "tuberculosis" are the same thing, that "rifampicin" and "rifampin" are the same drug, and that "DOT therapy" means Directly Observed Treatment.
-
-Runs locally on Codespaces. Free. 768-dimensional vectors.
-
-### Document DB: MongoDB
-Stores the raw and parsed documents before they go into the vector index. MongoDB is the right tool here because:
-- Medical documents are semi-structured (a PubMed paper has different fields than an ICMR PDF)
-- No fixed schema needed — different source types have different metadata
-- Motor (async MongoDB driver) plays well with FastAPI
-- Free tier on Railway for deployment
-
-### Vector DB: Milvus (Zilliz Cloud)
-Stores embeddings of document chunks for semantic search. Chosen over FAISS (our Colab prototype) because:
-- **Payload filtering** — we can query "find top chunks where source_type = icmr AND condition_tag = dengue"
-- **Hybrid search** — vector similarity + keyword search combined. Critical for exact drug names
-- **Persistent storage** — index survives restarts unlike in-memory FAISS
-- **Managed cloud option** — Zilliz Cloud removes local ops overhead
-
-### LLM: Llama 3.1 70B via NVIDIA NIM
-We call this as an API — no GPU needed on our side. NIM gives us OpenAI-compatible endpoints so the LangChain integration is plug-and-play.
-
-### Cache: Redis
-Medical queries repeat. "First-line treatment for TB" will get asked hundreds of times. Cache the answer by query hash. A cache hit drops response time from ~5 seconds to ~200ms.
-
-### Dev Environment: GitHub Codespaces
-Full VS Code in the browser, persistent storage, Git built in. Since we call NVIDIA NIM as an API, we don't need a GPU on our dev machine. Student Pack gives 180 core-hours/month free — plenty.
-
-### Deployment: Railway
-Deploys Python/FastAPI directly from GitHub. Managed MongoDB and Redis plus external vector DB endpoint. Simple.
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.11 |
+| Backend | FastAPI |
+| Embeddings | PubMedBERT (`pritamdeka/S-PubMedBert-MS-MARCO`) |
+| Reranker | BAAI/bge-reranker-base |
+| Vector DB | Milvus / Zilliz Cloud |
+| Document DB | MongoDB |
+| Cache | Redis |
+| LLM | NVIDIA NIM (Llama 3.1 70B) |
+| NLP | scispacy (`en_core_sci_md`) |
 
 ---
 
-## 4. Setting Up GitHub Codespaces
+## 4. Project Structure
 
-### Step 1 — Create the GitHub repo
-
-```bash
-# On github.com, create a new repo called: openinsight
-# Clone it locally or open directly in Codespaces
 ```
-
-### Step 2 — Push this project into the repo
-
-```bash
-git init
-git remote add origin https://github.com/YOUR_USERNAME/openinsight.git
-git add .
-git commit -m "init: project scaffold"
-git push -u origin main
-```
-
-### Step 3 — Open in Codespaces
-
-1. Go to your repo on GitHub
-2. Click the green **Code** button
-3. Click **Codespaces** tab
-4. Click **Create codespace on main**
-
-GitHub will:
-- Spin up a container using `.devcontainer/devcontainer.json`
-- Run `.devcontainer/setup.sh` automatically
-- Install all Python dependencies from `requirements.txt`
-- Start MongoDB and Redis via Docker Compose
-- Install all VS Code extensions
-
-This takes about 3-4 minutes the first time.
-
-### Step 4 — Set up your environment variables
-
-```bash
-cp .env.example .env
-# Edit .env and fill in your actual API keys
-```
-
-Keys you need:
-- `NVIDIA_NIM_API_KEY` — from build.nvidia.com (free credits available)
-- `NCBI_API_KEY` — from ncbi.nlm.nih.gov/account (free, just register)
-
-### Step 5 — Verify everything is running
-
-```bash
-# Check Docker services
-docker compose ps
-
-# Test vector backend config
-python scripts/zilliz_smoke.py
-
-# Test MongoDB
-python -c "from pymongo import MongoClient; print(MongoClient('mongodb://localhost:27017').server_info()['version'])"
-
-# Start the API
-uvicorn src.api.main:app --reload --port 8000
-
-# Visit http://localhost:8000/docs in your browser
-# You should see the FastAPI auto-generated docs
+src/
+├── api/
+│   └── routes/
+│       ├── search.py         # Simple search endpoint
+│       └── deep_insights.py  # DeepInsights endpoint
+│
+├── query/
+│   ├── search/               # RAG pipeline
+│   │   ├── cache.py          # Redis caching
+│   │   ├── retriever.py      # Hybrid retrieval
+│   │   ├── fusion.py         # RRF fusion
+│   │   ├── reranker.py       # Cross-encoder reranking
+│   │   ├── mmr.py            # Diversity selection
+│   │   ├── query_understanding.py  # Intent classification
+│   │   └── query_rewriter_v2.py    # LLM query rewriting
+│   │
+│   ├── agents/               # DeepInsights
+│   │   ├── intent_router.py  # Simple vs complex detection
+│   │   ├── query_decomposer.py  # Sub-query generation
+│   │   └── deep_insights.py  # Orchestrator
+│   │
+│   ├── validation/           # Answer validation
+│   │   ├── validator.py      # Main validator
+│   │   ├── citation_checker.py
+│   │   ├── confidence_scorer.py
+│   │   ├── hallucination_detector.py
+│   │   └── medical_safety.py
+│   │
+│   └── prompts.py            # LLM prompts
+│
+├── ingestion/                # Data pipeline
+│   ├── pipeline_v4.py        # Main pipeline
+│   ├── chunker_v3.py         # Hierarchical chunking
+│   ├── embedder_v2.py        # Dual embedding
+│   ├── dedupe.py             # Document deduplication
+│   ├── parsers/              # PDF/XML parsers
+│   │   ├── grobid.py
+│   │   ├── icmr.py
+│   │   ├── pubmed.py
+│   │   └── ...
+│   └── celery_app.py         # Distributed ingestion
+│
+├── core/
+│   └── config.py             # Settings (from .env)
+│
+└── utils/
+    └── llm_client.py         # NVIDIA NIM client
 ```
 
 ---
 
-## 5. Project File Structure
+## 5. Configuration
 
+All configuration is driven by environment variables. See `.env.example` for all options.
+
+**Key variables:**
+```bash
+# LLM
+NVIDIA_NIM_API_KEY=your_key
+NIM_MODEL=meta/llama-3.1-70b-instruct
+
+# Database
+MONGODB_URL=mongodb://localhost:27017
+REDIS_URL=redis://localhost:6379
+VECTOR_URI=https://your-cluster.zillizcloud.com
+VECTOR_TOKEN=your_token
+
+# Models
+EMBEDDING_MODEL=pritamdeka/S-PubMedBert-MS-MARCO
+RERANKER_MODEL_NAME=BAAI/bge-reranker-base
+SPACY_MODEL=en_core_sci_md
 ```
-openinsight/
-│
-├── .devcontainer/
-│   ├── devcontainer.json       # Codespaces config — Python 3.11, Docker, Node
-│   └── setup.sh                # Post-create: pip install, docker compose up
-│
-├── src/
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── main.py             # FastAPI app entry point
-│   │   └── routes/             # (coming) query.py, ingest.py
-│   │
-│   ├── ingestion/
-│   │   ├── __init__.py
-│   │   ├── document_db.py      # MongoDB client + document/chunk models
-│   │   ├── vector_db.py        # Vector store compatibility helpers
-│   │   ├── embeddings.py       # PubMedBERT loader + embed_texts(), embed_query()
-│   │   ├── parsers/            # (coming) icmr.py, pubmed.py, pdf.py
-│   │   └── pipeline.py         # (coming) orchestrates parse → chunk → embed → store
-│   │
-│   ├── query/
-│   │   ├── __init__.py
-│   │   ├── standard.py         # (coming) standard search RAG chain
-│   │   ├── deepconsult.py      # (coming) multi-agent orchestration
-│   │   └── prompts.py          # (coming) prompt templates
-│   │
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py           # Settings via pydantic-settings, reads .env
-│   │
-│   └── utils/
-│       ├── __init__.py
-│       └── chunker.py          # Medical-aware text chunker
-│
-├── data/
-│   ├── raw/                    # Drop ICMR PDFs here (gitignored)
-│   └── processed/              # Intermediate parsed outputs (gitignored)
-│
-├── tests/
-│   └── __init__.py             # (coming) unit + integration tests
-│
-├── scripts/
-│   │                           # (coming) one-off scripts
-│   │                           # e.g. run_ingestion.py, seed_icmr.py
-│
-├── docs/
-│   └── GUIDE.md                # This file
-│
-├── docker-compose.yml          # MongoDB + Redis (+GROBID)
-├── requirements.txt            # All Python dependencies
-├── .env.example                # Template — copy to .env and fill in keys
-├── .env                        # Your actual keys (gitignored)
-└── .gitignore
-```
+
+**Tunable parameters:**
+- Retrieval: `TOP_K_RETRIEVAL`, `TOP_K_AFTER_FUSION`, `MMR_LAMBDA`
+- Chunking: `CHUNK_TARGET_TOKENS`, `CHUNK_OVERLAP_TOKENS`
+- Ingestion: `INGESTION_BATCH_SIZE`, `QUALITY_SCORE_THRESHOLD`
 
 ---
 
-## 6. The Two Databases
+## 6. Constants & Magic Values
 
-Understanding why we have two separate databases is important.
+All magic values are consolidated in `src/core/constants.py`. Import from there to avoid duplication.
 
-### MongoDB — Document Database
-
-**What it stores:** The actual content of every document we ingest — full text of ICMR PDFs, PubMed paper abstracts and metadata, guideline sections.
-
-**Why MongoDB and not just Vector DB?**
-The vector DB stores vectors and retrieval payloads. You cannot store a full 40-page ICMR guideline PDF as your document source of truth in a vector index. MongoDB is where the source of truth lives. When a doctor asks a question and we need to return a citation, we look up the full document in MongoDB to render the citation properly.
-
-**Collections:**
-
-| Collection | Purpose |
-|---|---|
-| `documents` | One record per source document (ICMR PDF, PubMed paper) |
-| `chunks` | Passage-level splits of each document, ready for embedding |
-| `sources` | Metadata about each knowledge source (last updated, doc count) |
-
-### Milvus/Zilliz — Vector Database
-
-**What it stores:** Float vectors (768 dimensions) representing the semantic meaning of each chunk, plus a small payload (chunk_id, source_type, title, condition_tags).
-
-**Why Milvus/Zilliz and not FAISS?**
-
-| Feature | FAISS (old) | Milvus/Zilliz |
-|---|---|---|
-| Persistence | Manual save/load | Built-in |
-| Metadata filtering | None | Full payload filter |
-| Hybrid search | No | Yes (vector + keyword) |
-| Scalability | Single process | Production-ready |
-| API | Python only | REST + Python |
-
-**How they connect:** Every chunk in MongoDB has a corresponding point in the vector DB. The vector payload contains the MongoDB `_id` so we can look up the full text after retrieval.
-
+**Key constants:**
+```python
+from src.core.constants import (
+    EvidenceBoost,      # Boosts for evidence levels (1a→1.35, 1b→1.25, etc.)
+    RecencyBoost,      # Boosts for publication recency
+    RRF_K,             # Reciprocal Rank Fusion constant (default: 60)
+    DEFAULT_TOP_K,     # Default retrieval k
+    MMR_LAMBDA,        # Balance relevance vs diversity
+)
 ```
-MongoDB chunk._id  ←──────────────────► Vector point.payload.mongo_id
-MongoDB chunk.text                       Vector point.vector (768 floats)
-MongoDB chunk.source_type                Vector point.payload.source_type
-MongoDB chunk.title                      Vector point.payload.title
+
+**Usage:**
+```python
+boost = EvidenceBoost.get_boost("1a")  # returns 1.35
+recency = RecencyBoost.get_boost(365)  # returns 1.2 for papers <1yr old
 ```
+
+**Design principles:**
+- All boost values are tunable via config
+- RRF_K defaults to 60 (higher than typical 60 means more weight to rank position)
+- Constants are classes for flexible lookup tables
 
 ---
 
-## 7. Data Ingestion Pipeline
+## 7. Query Pipeline
 
-This is Phase 1 of the build. The quality of every answer depends on what is in the index.
+### Simple Search (`POST /search`)
+
+```
+Query → Intent Classification → Cache Check → Hybrid Retrieval
+        → RRF Fusion → Reranking → MMR → LLM Generation → Validation
+```
+
+**Flow:**
+1. **Query Understanding** - Classifies intent (diagnostic/therapeutic/prognostic/drug_info/guideline)
+2. **Cache Check** - Returns cached result if available
+3. **Hybrid Retrieval** - Parallel dense + sparse vector search
+4. **RRF Fusion** - Reciprocal Rank Fusion combining results
+5. **Reranking** - Cross-encoder reranking for better relevance
+6. **MMR** - Maximal Marginal Relevance for diversity
+7. **LLM Generation** - Generate answer using NVIDIA NIM
+8. **Validation** - Check citations, hallucinations, safety
+
+---
+
+## 7. DeepInsights Mode
+
+### When to Use
+- Drug interaction checks
+- Differential diagnosis
+- Protocol conflicts
+- Multi-condition management
 
 ### Flow
-
 ```
-Source document
-      │
-      ▼
-  Parser          ← converts PDF/XML/HTML to clean text + metadata
-      │
-      ▼
-  MongoDB         ← stores full document record
-      │
-      ▼
-  Chunker         ← splits text into 512-token overlapping passages
-      │
-      ▼
-  MongoDB         ← stores each chunk record (embedded=False)
-      │
-      ▼
-  Embedder        ← PubMedBERT generates 768-dim vector per chunk
-      │
-      ▼
-  Vector DB       ← upserts vector + payload, marks chunk embedded=True
+Query → Intent Router → Complex? 
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+    Simple RAG           DeepInsights
+                            │
+                    Query Decomposer
+                            │
+               ┌────────────┼────────────┐
+               ▼            ▼            ▼
+         Sub-query 1  Sub-query 2  ... Sub-query N
+               │            │            │
+               └────────────┼────────────┘
+                            ▼
+                  Evidence Synthesizer
+                            │
+                            ▼
+                  Structured Answer
 ```
 
-### Source types we need to ingest
-
-| Source | Format | Priority | Notes |
-|---|---|---|---|
-| ICMR Clinical Guidelines | PDF | High | Already have some from Colab work |
-| PubMed | XML via NCBI API | High | Live search + periodic bulk index |
-| National List of Essential Medicines | PDF | High | NMC publishes this |
-| State health ministry guidelines | PDF/HTML | Medium | Varies by state |
-| WHO India-specific docs | PDF | Medium | SEARO region publications |
-
-### Chunking strategy
-
-Medical text has special requirements. A naive chunker that just splits every 512 tokens will break:
-- Dosage tables in half (you lose context about which drug the dose refers to)
-- Clinical decision trees mid-branch
-- Drug interaction tables
-
-Our chunker in `src/utils/chunker.py` splits at sentence boundaries and avoids common medical abbreviations (`mg`, `BD`, `TDS`, `IV`, etc.). Target chunk size is ~512 words with 80-word overlap.
+**Agents:**
+- **Intent Router** - Detects simple vs complex queries
+- **Query Decomposer** - Breaks complex queries into sub-queries
+- **Orchestrator** - Coordinates parallel retrieval and synthesis
 
 ---
 
-## 8. Query Flow
+## 8. Data Ingestion
 
-### Standard Search (Phase 2)
-
-```python
-# 1. Embed the doctor's query
-query_vector = embed_query("first line treatment for dengue with warning signs")
-
-# 2. Search Qdrant — top 8 most relevant chunks
-results = qdrant.search(query_vector, top_k=8)
-
-# 3. Pull full chunk texts from MongoDB
-chunks = [mongo.get_chunk(r.payload["mongo_id"]) for r in results]
-
-# 4. Build prompt
-context = "\n\n".join([c.chunk_text for c in chunks])
-prompt = f"""You are a clinical decision support assistant for Indian physicians.
-Answer the question using only the provided context. Cite sources by number.
-
-Context:
-{context}
-
-Question: {query}
-
-Answer:"""
-
-# 5. Call Llama 3.1 70B via NIM
-answer = nim_client.chat(prompt)
-
-# 6. Return answer + citations
+### Pipeline Flow
+```
+Source Files → Parser → Deduplication → Metadata Enrichment
+    → Chunking → Quality Scoring → Embedding → Vector Index → MongoDB
 ```
 
-### DeepConsult (Phase 3)
+**Features:**
+- Document deduplication (content hash)
+- Quality scoring and filtering
+- Dual embeddings (dense + sparse)
+- Retry logic for failures
+- Monitoring and metrics
 
-For complex queries the agent orchestrator:
-1. Breaks the query into sub-questions (e.g. "what is the drug?", "what is the dose?", "what are contraindications?")
-2. Runs parallel Qdrant searches for each sub-question
-3. Passes all results through a synthesis prompt
-4. Returns a comprehensive answer with multi-source citations
-
----
-
-## 9. Development Phases
-
-### Phase 1 — Ingestion Pipeline (current)
-- [ ] ICMR PDF parser (`src/ingestion/parsers/icmr.py`)
-- [ ] PubMed XML parser (`src/ingestion/parsers/pubmed.py`)
-- [ ] Ingestion pipeline orchestrator (`src/ingestion/pipeline.py`)
-- [ ] Script to seed MongoDB + Qdrant from local ICMR PDFs
-- [ ] Script to pull and index PubMed articles by condition
-
-### Phase 2 — Standard Search Query Flow
-- [ ] Standard search chain (`src/query/standard.py`)
-- [ ] Prompt templates for Indian clinical context (`src/query/prompts.py`)
-- [ ] FastAPI `/query` endpoint (`src/api/routes/query.py`)
-- [ ] Redis caching layer
-- [ ] Basic test queries to validate answer quality
-
-### Phase 3 — DeepConsult Mode
-- [ ] Agent orchestrator (`src/query/deepconsult.py`)
-- [ ] Sub-question decomposition
-- [ ] Result synthesis prompt
-- [ ] FastAPI `/query/deep` endpoint
-
-### Phase 4 — UI
-- [ ] React/Next.js frontend on Vercel
-- [ ] Simple chat interface
-- [ ] Citation display with links back to source
-
-### Phase 5 — Deployment
-- [ ] Dockerize the FastAPI app
-- [ ] Railway project setup (FastAPI + MongoDB + Redis + Qdrant)
-- [ ] GitHub Actions CI/CD pipeline
-- [ ] Environment variable management on Railway
-
----
-
-## 10. Deployment
-
-### Railway setup (when ready)
-
+### Running Ingestion
 ```bash
-# Install Railway CLI
-npm install -g @railway/cli
+# ICMR PDFs
+python scripts/seed_icmr.py
 
-# Login
-railway login
+# PubMed
+python scripts/seed_pubmed.py
 
-# Create new project
-railway new openinsight
-
-# Add services
-railway add --service mongodb
-railway add --service redis
-
-# Deploy FastAPI app
-railway up
-```
-
-Qdrant runs as a Docker container on Railway using the `qdrant/qdrant` image with a persistent volume.
-
-### GitHub Actions (auto-deploy on push)
-
-Create `.github/workflows/deploy.yml`:
-```yaml
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: openinsight-api
+# Re-ingest all
+python scripts/reingest_v2.py
 ```
 
 ---
 
-## 11. Environment Variables Reference
+## 9. API Endpoints
 
-| Variable | Required | Description |
-|---|---|---|
-| `NVIDIA_NIM_API_KEY` | Yes | From build.nvidia.com |
-| `NVIDIA_NIM_BASE_URL` | No | Default: NVIDIA's endpoint |
-| `MONGODB_URL` | No | Default: localhost:27017 |
-| `MONGODB_DB` | No | Default: openinsight |
-| `VECTOR_BACKEND` | No | Default: milvus |
-| `VECTOR_URI` | Yes | Milvus/Zilliz endpoint URI |
-| `VECTOR_TOKEN` | Yes | Milvus/Zilliz token or API key |
-| `VECTOR_COLLECTION` | No | Default: openinsight_chunks |
-| `REDIS_URL` | No | Default: localhost:6379 |
-| `NCBI_API_KEY` | Recommended | Rate limit: 3 req/s without, 10 with |
-| `NCBI_EMAIL` | Yes | Required by NCBI Entrez policy |
-| `EMBEDDING_MODEL` | No | Default: PubMedBERT |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/search` | POST | Simple RAG search |
+| `/deep-insights` | POST | Multi-agent complex query |
+| `/deep-insights/route-check` | GET | Check query complexity |
+| `/health` | GET | Health check |
+
+### Request/Response
+
+**POST /search**
+```json
+{"query": "What is the treatment for dengue?", "top_k": 6}
+```
+
+**Response**
+```json
+{
+  "answer": "...",
+  "citations": [...],
+  "query_intent": "therapeutic",
+  "chunks_retrieved": 6,
+  "cache_hit": false,
+  "confidence_score": 0.85
+}
+```
 
 ---
 
-## 12. Useful Commands
+## 10. Development
 
+### Setup
 ```bash
-# Start all services
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy env file
+cp .env.example .env
+
+# Start services
 docker compose up -d
 
-# Stop all services
-docker compose down
-
-# View service logs
-docker compose logs mongodb -f
-
-# Start FastAPI dev server
+# Run API
 uvicorn src.api.main:app --reload --port 8000
+```
 
+### Testing
+```bash
 # Run tests
 pytest tests/ -v
 
-# Run vector backend smoke check
-python scripts/vector_backend_smoke.py
+# Smoke test vector DB
+python scripts/zilliz_smoke.py
+```
 
-# Check MongoDB collections
-mongosh openinsight --eval "db.getCollectionNames()"
+---
+
+## 11. Useful Commands
+
+```bash
+# Start API
+uvicorn src.api.main:app --reload --port 8000
+
+# Ingest ICMR PDFs
+python scripts/seed_icmr.py
+
+# Re-ingest all
+python scripts/reingest_v2.py
+
+# Test vector backend
+python scripts/zilliz_smoke.py
 
 # Format code
 black src/
 isort src/
-
-# Run ingestion script (Phase 1)
-python scripts/seed_icmr.py
-
-# Rebuild Docker services (after docker-compose.yml changes)
-docker compose down && docker compose up -d --build
 ```
 
 ---
 
 ## Notes
 
-- Never commit `.env` — it is in `.gitignore`
-- The `data/` folder is gitignored — ICMR PDFs are large and should not be in the repo. Store them in the Codespace and later in Railway volumes or an S3 bucket
-- When you first open the Codespace, `setup.sh` runs automatically. If something fails, run `bash .devcontainer/setup.sh` manually in the terminal
-- Mongo and Redis data persist in Docker volumes. If you want to reset local state: `docker compose down -v && docker compose up -d`
+- Never commit `.env` — it's in `.gitignore`
+- Medical knowledge patterns are hardcoded in respective modules (see `docs/MEDICAL_KNOWLEDGE_HARDCODED.md`)
+- For architecture diagrams, see `docs/` folder
 
 ---
 
-*OpenInsight — SentArc Labs, Pune | Built by Aditya Singh | adi.singh1426@gmail.com*
+*OpenInsight — SentArc Labs | Built by Aditya Singh*

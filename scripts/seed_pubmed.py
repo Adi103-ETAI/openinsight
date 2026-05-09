@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ingestion.parsers.pubmed import PubMedParser
-from src.ingestion.pipeline import run_pipeline
+from src.ingestion.pipeline_v4 import IngestionPipelineV4
 
 INDIA_QUERIES = [
     "tuberculosis drug resistant India treatment 2020 2021 2022 2023",
@@ -37,13 +37,9 @@ def main() -> None:
         if idx < len(INDIA_QUERIES):
             time.sleep(2)
 
-    summary = asyncio.run(run_pipeline(all_documents))
-
-    print("PubMed ingestion complete")
-    print(f"Queries run: {len(INDIA_QUERIES)}")
-    print(f"Documents created: {summary['documents_stored']}")
-    print(f"Chunks created: {summary['chunks_created']}")
-    print(f"Chunks embedded: {summary['chunks_embedded']}")
+    print("Note: PubMed seeding now uses directory-based ingestion.")
+    print("Please run: python -m src.ingestion.run_ingestion_v2 --source pubmed")
+    print(f"Documents collected: {len(all_documents)}")
 
 
 if __name__ == "__main__":

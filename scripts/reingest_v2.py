@@ -1,11 +1,10 @@
 """
-Re-ingestion Script v2
-Clears old v1 data, re-ingests all ICMR PDFs using the v2 pipeline.
-Run this once after Phase 2 is complete.
+Re-ingestion Script v4
+Re-ingests all ICMR PDFs using the v4 pipeline with deduplication and quality scoring.
+Run this to re-ingest all documents.
 """
 
 import asyncio
-import importlib
 import logging
 import sys
 from pathlib import Path
@@ -17,52 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-def _import_attr(module_name: str, attr_name: str):
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
-
-
-async def clear_v1_data():
-    """Remove all v1-ingested ICMR documents and their chunks from MongoDB and vector DB."""
-    get_db = _import_attr("src.ingestion.document_db", "get_db")
-    drop_collection = _import_attr("src.ingestion.vector_db", "drop_collection")
-    get_settings = _import_attr("src.core.config", "get_settings")
-
-    settings = get_settings()
-    db = get_db()
-
-    logger.info("Clearing v1 ICMR data from MongoDB...")
-    result = await db["documents"].delete_many(
-        {
-            "source_type": "icmr",
-            "$or": [
-                {"parser_version": "v1"},
-                {"parser_version": {"$exists": False}},
-            ],
-        }
-    )
-    logger.info("Deleted %s v1 documents", result.deleted_count)
-
-    chunk_result = await db["chunks"].delete_many(
-        {
-            "source_type": "icmr",
-            "$or": [
-                {"parser_version": "v1"},
-                {"parser_version": {"$exists": False}},
-            ],
-        }
-    )
-    logger.info("Deleted %s v1 chunks", chunk_result.deleted_count)
-
-    # Clear vector collection entirely and recreate
-    drop_collection(collection_name=settings.vector_collection)
-    logger.info("Vector collection cleared")
-
-
 async def main():
-    icmr_parser_cls = _import_attr("src.ingestion.parsers.icmr", "ICMRParser")
-    ocr_parser_cls = _import_attr("src.ingestion.parsers.ocr", "OCRParser")
-    run_pipeline_v2 = _import_attr("src.ingestion.pipeline_v2", "run_pipeline_v2")
+    from src.ingestion.pipeline_v4 import IngestionPipelineV4
 
     icmr_dir = Path("data/raw/icmr")
     if not icmr_dir.exists():
@@ -75,50 +30,25 @@ async def main():
         return
 
     print(f"Found {len(pdf_files)} PDFs")
-    print("Clearing v1 data...")
-    await clear_v1_data()
 
-    all_documents = []
-    parsed = 0
-    ocr_used = 0
-    failed = 0
+    pipeline = IngestionPipelineV4()
 
-    for pdf_path in pdf_files:
-        # Try pdfplumber first, fall back to OCR for scanned PDFs
-        parser = icmr_parser_cls(pdf_path)
-        docs = parser.parse()
+    summary = await pipeline.ingest_directory(
+        directory=str(icmr_dir),
+        source="icmr",
+        recreate_index=False,
+        batch_size=10,
+    )
 
-        if not docs or not docs[0].content.strip():
-            logger.warning("pdfplumber got no text, trying OCR: %s", pdf_path.name)
-            parser = ocr_parser_cls(pdf_path, source_type="icmr")
-            docs = parser.parse()
-            if docs:
-                ocr_used += 1
-
-        if docs:
-            # Mark as India-specific for ICMR sources
-            for doc in docs:
-                doc.is_india_specific = True
-                doc.parser_version = "v2"
-            all_documents.extend(docs)
-            parsed += 1
-        else:
-            logger.error("Failed to parse: %s", pdf_path.name)
-            failed += 1
-
-    print("\nParsing complete:")
-    print(f"  Parsed: {parsed}")
-    print(f"  OCR used: {ocr_used}")
-    print(f"  Failed: {failed}")
-    print(f"\nStarting v2 pipeline for {len(all_documents)} documents...")
-
-    summary = await run_pipeline_v2(all_documents)
-
-    print("\nRe-ingestion complete:")
-    print(f"  Documents stored: {summary['documents_stored']}")
-    print(f"  Chunks created:   {summary['chunks_created']}")
-    print(f"  Chunks embedded:  {summary['chunks_embedded']}")
-    print(f"  Noise skipped:    {summary['chunks_skipped_noise']}")
+    print("\n=== Re-ingestion Complete ===")
+    print(f"Files total: {summary['files_total']}")
+    print(f"Files parsed: {summary['files_parsed']}")
+    print(f"Documents stored: {summary['documents_stored']}")
+    print(f"Chunks created: {summary['chunks_created']}")
+    print(f"Chunks indexed: {summary['chunks_indexed']}")
+    print(f"Chunks deduped: {summary.get('chunks_deduped', 0)}")
+    print(f"Chunks quality filtered: {summary.get('chunks_quality_filtered', 0)}")
+    print(f"Files failed: {summary['files_failed']}")
 
 
 if __name__ == "__main__":

@@ -9,14 +9,14 @@ from typing import Literal, Optional
 
 from loguru import logger
 
-from src.query.citation_checker import CitationCheckResult, check_citations
-from src.query.confidence_scorer import ConfidenceBreakdown, score_confidence
-from src.query.hallucination_detector import (
+from .citation_checker import CitationCheckResult, check_citations
+from .confidence_scorer import ConfidenceBreakdown, score_confidence
+from .hallucination_detector import (
     HallucinationFlag,
     HallucinationResult,
     detect_hallucinations,
 )
-from src.query.medical_safety import SafetyCheckResult, SafetyWarning, check_safety
+from .medical_safety import SafetyCheckResult, SafetyWarning, check_safety
 
 
 @dataclass

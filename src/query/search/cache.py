@@ -18,6 +18,7 @@ class SearchCache:
         self.cache_version = settings.cache_version or self.CACHE_VERSION
         self.ttl_search = settings.cache_ttl_search
         self.ttl_rerank = settings.cache_ttl_rerank
+        self.key_prefix_length = settings.cache_key_prefix_length
         self.redis = aioredis.from_url(
             redis_url or settings.redis_url,
             encoding="utf-8",
@@ -26,7 +27,7 @@ class SearchCache:
 
     def _make_key(self, operation: str, *components: Any) -> str:
         content = "|".join(str(c) for c in components)
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:self.key_prefix_length]
         return f"openinsight:{self.cache_version}:{operation}:{digest}"
 
     async def get_search_result(
@@ -50,6 +51,23 @@ class SearchCache:
             key,
             ttl if ttl is not None else self.ttl_search,
             json.dumps(self._json_safe(result)),
+        )
+
+    async def get_query_embedding(self, query: str) -> list[float] | None:
+        """Cache query embedding for faster repeated queries."""
+        key = self._make_key("embed", query.lower().strip())
+        cached = await self.redis.get(key)
+        return json.loads(cached) if cached else None
+
+    async def set_query_embedding(
+        self, query: str, embedding: list[float], ttl: int | None = None
+    ) -> None:
+        """Cache query embedding."""
+        key = self._make_key("embed", query.lower().strip())
+        await self.redis.setex(
+            key,
+            ttl if ttl is not None else self.ttl_search,
+            json.dumps(embedding),
         )
 
     async def get_reranked(

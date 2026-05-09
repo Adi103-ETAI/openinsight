@@ -7,7 +7,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ingestion.parsers.icmr import ICMRParser
-from src.ingestion.pipeline import run_pipeline
+from src.ingestion.pipeline_v4 import IngestionPipelineV4
 
 
 def main() -> None:
@@ -21,24 +21,28 @@ def main() -> None:
         print("No PDF files found in data/raw/icmr/. Add at least one .pdf and rerun.")
         return
 
-    all_documents = []
-    files_parsed = 0
+    print(f"Found {len(pdf_files)} PDF files")
 
-    for pdf_path in pdf_files:
-        parser = ICMRParser(pdf_path)
-        docs = parser.parse()
-        if docs:
-            files_parsed += 1
-            all_documents.extend(docs)
+    pipeline = IngestionPipelineV4()
 
-    summary = asyncio.run(run_pipeline(all_documents))
+    summary = asyncio.run(
+        pipeline.ingest_directory(
+            directory=str(icmr_dir),
+            source="icmr",
+            recreate_index=False,
+            batch_size=10,
+        )
+    )
 
-    print("ICMR ingestion complete")
-    print(f"Files found: {len(pdf_files)}")
-    print(f"Files parsed: {files_parsed}")
-    print(f"Documents created: {summary['documents_stored']}")
+    print("\n=== ICMR Ingestion Complete ===")
+    print(f"Files total: {summary['files_total']}")
+    print(f"Files parsed: {summary['files_parsed']}")
+    print(f"Documents stored: {summary['documents_stored']}")
     print(f"Chunks created: {summary['chunks_created']}")
-    print(f"Chunks embedded: {summary['chunks_embedded']}")
+    print(f"Chunks indexed: {summary['chunks_indexed']}")
+    print(f"Chunks deduped: {summary.get('chunks_deduped', 0)}")
+    print(f"Chunks quality filtered: {summary.get('chunks_quality_filtered', 0)}")
+    print(f"Files failed: {summary['files_failed']}")
 
 
 if __name__ == "__main__":

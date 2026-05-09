@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.search.retriever import RetrievedChunk
+from .retriever import RetrievedChunk
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
