@@ -15,118 +15,118 @@ Use DeepInsights for complex clinical queries that require:
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              REQUEST                                        │
-│          { "query": "treatment for diabetes with hypertension..." }     │
+│          { "query": "treatment for diabetes with hypertension..." }         │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         INTENT ROUTER                                       │
-│                                                                              │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  Complex Query Detection (Rule-based + Entity Count)              │    │
+│  │  Complex Query Detection (Rule-based + Entity Count)                │    │
 │  │                                                                     │    │
 │  │  Complex Patterns:                                                  │    │
-│  │    - "vs / versus" (comparisons)                                  │    │
-│  │    - "interaction" (drug interactions)                            │    │
-│  │    - Multi-condition ("X and Y and Z")                             │    │
-│  │    - "contraindicated"                                            │    │
-│  │    - "differential"                                               │    │
+│  │    - "vs / versus" (comparisons)                                    │    │
+│  │    - "interaction" (drug interactions)                              │    │
+│  │    - Multi-condition ("X and Y and Z")                              │    │
+│  │    - "contraindicated"                                              │    │
+│  │    - "differential"                                                 │    │
 │  │                                                                     │    │
-│  │  Output:                                                           │    │
-│  │    - complexity: SIMPLE / MEDIUM / COMPLEX                       │    │
-│  │    - confidence: 0.0-1.0                                           │    │
-│  │    - detected_intent: therapeutic/diagnostic/etc.                 │    │
-│  │    - sub_query_types: [treatment, dosage, interactions, etc.]    │    │
+│  │  Output:                                                            │    │
+│  │    - complexity: SIMPLE / MEDIUM / COMPLEX                          │    │
+│  │    - confidence: 0.0-1.0                                            │    │
+│  │    - detected_intent: therapeutic/diagnostic/etc.                   │    │
+│  │    - sub_query_types: [treatment, dosage, interactions, etc.]       │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
                     ┌───────────────┴───────────────┐
                     ▼                               ▼
-              [SIMPLE]                       [COMPLEX]
-            Use standard                      Continue
-             /search
+                 [SIMPLE]                       [COMPLEX]
+               Use standard                      Continue
+                /search
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       QUERY DECOMPOSER                                      │
-│                                                                              │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  LLM-based Decomposition                                           │    │
+│  │  LLM-based Decomposition                                            │    │
 │  │                                                                     │    │
-│  │  Input: "treatment for diabetes with hypertension and CKD"       │    │
+│  │  Input: "treatment for diabetes with hypertension and CKD"          │    │
 │  │                                                                     │    │
-│  │  Output: 3-6 Sub-queries:                                          │    │
-│  │    - q1: "diabetes treatment options" (focus: treatment)        │    │
-│  │    - q2: "hypertension medication dosage" (focus: dosage)         │    │
-│  │    - q3: "drug interactions diabetes hypertension" (focus: inter)│    │
-│  │    - q4: "CKD contraindications diabetes drugs" (focus: contra)   │    │
-│  │    - q5: "ICMR guidelines diabetes hypertension" (focus: guide)  │    │
-│  │    - q6: "diabetes CKD management protocols" (focus: protocol)    │    │
+│  │  Output: 3-6 Sub-queries:                                           │    │
+│  │    - q1: "diabetes treatment options" (focus: treatment)            │    │
+│  │    - q2: "hypertension medication dosage" (focus: dosage)           │    │
+│  │    - q3: "drug interactions diabetes hypertension" (focus: inter)   │    │
+│  │    - q4: "CKD contraindications diabetes drugs" (focus: contra)     │    │
+│  │    - q5: "ICMR guidelines diabetes hypertension" (focus: guide)     │    │
+│  │    - q6: "diabetes CKD management protocols" (focus: protocol)      │    │
 │  │                                                                     │    │
-│  │  Fallback: Rule-based if LLM fails                                │    │
+│  │  Fallback: Rule-based if LLM fails                                  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                      PARALLEL RETRIEVAL                                     │
-│                                                                              │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│   │ Sub-q 1  │  │ Sub-q 2  │  │ Sub-q 3  │  │ Sub-q 4  │  │ Sub-q 5  │   │
-│   │          │  │          │  │          │  │          │  │          │   │
-│   │  Dense   │  │  Dense   │  │  Dense   │  │  Dense   │  │  Dense   │   │
-│   │  +       │  │  +       │  │  +       │  │  +       │  │  +       │   │
-│   │  Sparse  │  │  Sparse  │  │  Sparse  │  │  Sparse  │  │  Sparse  │   │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
-│        │             │             │             │             │          │
-│        └─────────────┴─────────────┴─────────────┴─────────────┘          │
+│                                                                             │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+│   │ Sub-q 1  │  │ Sub-q 2  │  │ Sub-q 3  │  │ Sub-q 4  │  │ Sub-q 5  │      │
+│   │          │  │          │  │          │  │          │  │          │      │
+│   │  Dense   │  │  Dense   │  │  Dense   │  │  Dense   │  │  Dense   │      │
+│   │  +       │  │  +       │  │  +       │  │  +       │  │  +       │      │
+│   │  Sparse  │  │  Sparse  │  │  Sparse  │  │  Sparse  │  │  Sparse  │      │
+│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘      │
+│        │             │             │             │             │            │
+│        └─────────────┴─────────────┴─────────────┴─────────────┘            │
 │                              │                                              │
 │                              ▼                                              │
-│              ┌───────────────────────────────────────┐                       │
-│              │  All chunks combined (with dedup)     │                       │
-│              │  Total: sub_queries × top_k          │                       │
-│              └───────────────────────────────────────┘                       │
+│              ┌───────────────────────────────────────┐                      │
+│              │  All chunks combined (with dedup)     │                      │
+│              │  Total: sub_queries × top_k           │                      │
+│              └───────────────────────────────────────┘                      │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONTRADICTION DETECTION                                  │
-│                                                                              │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  Check for conflicting evidence                                      │    │
+│  │  Check for conflicting evidence                                     │    │
 │  │                                                                     │    │
-│  │  Method 1: NLI Model (future)                                     │    │
-│  │  Method 2: Keyword-based (current)                                │    │
-│  │    - "improve" vs "worsen"                                         │    │
-│  │    - "recommended" vs "not recommended"                           │    │
-│  │    - "effective" vs "ineffective"                                  │    │
-│  │    - dosage conflicts                                              │    │
+│  │  Method 1: NLI Model (future)                                       │    │
+│  │  Method 2: Keyword-based (current)                                  │    │
+│  │    - "improve" vs "worsen"                                          │    │
+│  │    - "recommended" vs "not recommended"                             │    │
+│  │    - "effective" vs "ineffective"                                   │    │
+│  │    - dosage conflicts                                               │    │
 │  │                                                                     │    │
-│  │  Output: List of contradiction pairs                               │    │
-│  │    - type: treatment_conflict/dosage_conflict/outcome_conflict    │    │
-│  │    - evidence: conflicting keywords                                │    │
+│  │  Output: List of contradiction pairs                                │    │
+│  │    - type: treatment_conflict/dosage_conflict/outcome_conflict      │    │
+│  │    - evidence: conflicting keywords                                 │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                        ANSWER SYNTHESIS                                     │
-│                                                                              │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │  LLM Synthesis Prompt                                             │    │
+│  │  LLM Synthesis Prompt                                               │    │
 │  │                                                                     │    │
-│  │  "Synthesize the following evidence into a comprehensive answer: │    │
+│  │  "Synthesize the following evidence into a comprehensive answer:    │    │
 │  │                                                                     │    │
-│  │   Original Query: {query}                                         │    │
-│  │   Synthesis Guidance: {synthesis_prompt}                          │    │
-│  │   Evidence: {all_chunks}                                          │    │
+│  │   Original Query: {query}                                           │    │
+│  │   Synthesis Guidance: {synthesis_prompt}                            │    │
+│  │   Evidence: {all_chunks}                                            │    │
 │  │                                                                     │    │
-│  │   Include:                                                         │    │
-│  │   - Key findings from each sub-query                              │    │
-│  │   - Recommendations with citations                                │    │
-│  │   - Warnings about contradictions                                  │    │
-│  │   - Confidence assessment                                          │    │
+│  │   Include:                                                          │    │
+│  │   - Key findings from each sub-query                                │    │
+│  │   - Recommendations with citations                                  │    │
+│  │   - Warnings about contradictions                                   │    │
+│  │   - Confidence assessment                                           │    │
 │  │  "                                                                  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -134,27 +134,27 @@ Use DeepInsights for complex clinical queries that require:
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           RESPONSE                                          │
-│  {                                                                       │
-│    "answer": "...",                                                      │
-│    "sections": {                                                         │
-│      "summary": "...",                                                   │
-│      "diabetes_control": "...",                                          │
-│      "hypertension_management": "...",                                   │
-│      "kidney_considerations": "..."                                      │
-│    },                                                                    │
-│    "citations": [...],                                                   │
-│    "sub_queries": [                                                      │
-│      {"id": "q1", "focus": "treatment", "chunks_retrieved": 8},       │
-│      {"id": "q2", "focus": "dosage", "chunks_retrieved": 6},           │
-│      ...                                                                 │
-│    ],                                                                    │
-│    "contradictions": [                                                   │
-│      {"type": "dosage_conflict", "evidence": "500mg vs 1000mg"}        │
-│    ],                                                                    │
-│    "confidence": 0.78,                                                  │
-│    "complexity_detected": "complex",                                     │
-│    "processing_time_ms": 4500                                           │
-│  }                                                                       │
+│  {                                                                          │
+│    "answer": "...",                                                         │
+│    "sections": {                                                            │
+│      "summary": "...",                                                      │
+│      "diabetes_control": "...",                                             │
+│      "hypertension_management": "...",                                      │
+│      "kidney_considerations": "..."                                         │
+│    },                                                                       │
+│    "citations": [...],                                                      │
+│    "sub_queries": [                                                         │
+│      {"id": "q1", "focus": "treatment", "chunks_retrieved": 8},             │
+│      {"id": "q2", "focus": "dosage", "chunks_retrieved": 6},                │
+│      ...                                                                    │
+│    ],                                                                       │
+│    "contradictions": [                                                      │
+│      {"type": "dosage_conflict", "evidence": "500mg vs 1000mg"}             │
+│    ],                                                                       │
+│    "confidence": 0.78,                                                      │
+│    "complexity_detected": "complex",                                        │
+│    "processing_time_ms": 4500                                               │
+│  }                                                                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
