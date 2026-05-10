@@ -236,18 +236,51 @@ The ingestion pipeline transforms raw source documents into searchable vector em
 
 ## Running Ingestion
 
+### Quick Start (Recommended)
 ```bash
-# Run ingestion task via Celery
+# Using the wrapper script
+python scripts/run.py <source> <directory> [options]
+
+# Examples
+python scripts/run.py pubmed ./data/pdfs
+python scripts/run.py icmr ./data/pdfs -w 8 --recreate
+python scripts/run.py who ./pdfs --dry-run
+python scripts/run.py pubmed ./pdfs --limit 100
+```
+
+### Using the module directly
+```bash
+python -m src.ingestion.run_ingestion \
+  --source pubmed \
+  --dir ./data/pdfs \
+  --workers 6 \
+  --batch-size 10
+```
+
+### Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--source` | Source (pubmed, icmr, cochrane, etc.) | required |
+| `--dir` | Directory with files | required |
+| `-w, --workers` | Parallel workers | 6 |
+| `-b, --batch-size` | Files per batch | 10 |
+| `--recreate` | Recreate vector index | false |
+| `--dry-run` | Parse only, no embedding/indexing | false |
+| `--skip-embed` | Skip embedding | false |
+| `--skip-index` | Skip vector indexing | false |
+| `--limit N` | Limit files | none |
+| `--stats` | Show statistics | false |
+| `--resume/--no-resume` | Checkpoint resume | enabled |
+| `--reset` | Reset checkpoint | false |
+
+### Available Sources
+```
+pubmed, icmr, cochrane, nmc_guideline, rssdi, who, cdc, statpearls
+```
+
+### Celery (Distributed)
+```bash
 python -m src.ingestion.tasks run
-
-# Or run directly
-python -m src.ingestion.run_ingestion
-
-# Re-ingest all documents
-python -m src.ingestion.run_ingestion --reingest
-
-# Ingest from specific sources
-python -m src.ingestion.run_ingestion --sources icmr pubmed
 ```
 
 ---
