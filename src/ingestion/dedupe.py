@@ -4,6 +4,8 @@ import hashlib
 import logging
 from typing import Any, Optional
 
+from src.data.mongo.connection import get_mongo_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,12 +74,10 @@ class DocumentDeduplicator:
 
     async def get_existing_doc_ids(self, source_type: str) -> set[str]:
         """Get all existing doc_ids for a source type."""
-        from motor.motor_asyncio import AsyncIOMotorClient
-        from src.core.config import get_settings
+        from src.config.settings import get_settings
         
         settings = get_settings()
-        client = AsyncIOMotorClient(settings.mongodb_url)
-        db = client[settings.mongodb_db]
+        db = get_mongo_db(settings.mongodb_db)
         
         cursor = db["documents_v2"].find(
             {"source_type": source_type},

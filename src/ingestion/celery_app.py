@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from celery import Celery
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 
 settings = get_settings()
 

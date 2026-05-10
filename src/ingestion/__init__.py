@@ -4,8 +4,7 @@ at collection time (vector backend SDKs, sentence-transformers, etc.).
 """
 
 __all__ = [
-    "run_pipeline_v3",
-    "run_pipeline_v3_from_parser",
+    "IngestionPipeline",
     "is_duplicate",
     "enrich_document_hashes",
     "score_chunk",
@@ -19,9 +18,9 @@ __all__ = [
 
 
 def __getattr__(name):  # noqa: N807
-    if name in ("run_pipeline_v3", "run_pipeline_v3_from_parser"):
-        from src.ingestion.pipeline_v3 import run_pipeline_v3, run_pipeline_v3_from_parser
-        return locals()[name]
+    if name == "IngestionPipeline":
+        from src.ingestion.pipeline import IngestionPipeline
+        return IngestionPipeline
     if name in ("is_duplicate", "enrich_document_hashes"):
         from src.ingestion.deduplication import is_duplicate, enrich_document_hashes
         return locals()[name]
@@ -34,4 +33,4 @@ def __getattr__(name):  # noqa: N807
     if name in ("IngestionMonitor", "RunMetrics"):
         from src.ingestion.monitoring import IngestionMonitor, RunMetrics
         return locals()[name]
-    raise AttributeError(f"module 'src.ingestion' has no attribute {name!r}")
+    raise AttributeError(f"module 'src.ingestion' has no attribute '{name}'")

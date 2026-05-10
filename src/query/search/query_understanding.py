@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.vectorstore.filters import FilterCondition, FilterExpression, FilterOperator
 
 

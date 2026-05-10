@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .retriever import RetrievedChunk
-from src.core.constants import EvidenceBoost, RecencyBoost, RRF_K
+from src.constants import EvidenceBoost, RecencyBoost, RRF_K
 
 
 def reciprocal_rank_fusion(

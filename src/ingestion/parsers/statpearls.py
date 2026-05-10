@@ -20,7 +20,7 @@ from Bio import Entrez
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
 

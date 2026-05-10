@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.ingestion.celery_app import celery_app
-from src.ingestion.chunker_v3 import HierarchicalChunkerV3
+from src.ml.chunking.chunker import HierarchicalChunkerV3
 from src.ingestion.dedupe import DocumentDeduplicator
-from src.ingestion.embedder_v2 import DualEmbedderV2
-from src.ingestion.metadata_v2 import MetadataEnricherV2
-from src.ingestion.mongo_store_v2 import MongoDocStoreV2
-from src.ingestion.vector_indexer_v2 import VectorIndexerV2
+from src.ml.embedding.embedder import DualEmbedderV2
+from src.ingestion.metadata import MetadataEnricherV2
+from src.data.mongo.doc_store import MongoDocStoreV2
+from src.ingestion.vector_indexer import VectorIndexer
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,13 @@ class IngestionWorker:
     """Worker class for processing single documents."""
 
     def __init__(self):
-        from src.core.config import get_settings
+        from src.config.settings import get_settings
         self.settings = get_settings()
         
         self.chunker = HierarchicalChunkerV3()
         self.metadata = MetadataEnricherV2()
         self.embedder = DualEmbedderV2(self.settings.dense_model_name)
-        self.indexer = VectorIndexerV2()
+        self.indexer = VectorIndexer()
         self.mongo = MongoDocStoreV2(
             mongo_url=self.settings.mongodb_url,
             db_name=self.settings.mongodb_db,

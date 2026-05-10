@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
-from src.core.config import get_settings
+from src.config.settings import get_settings
 
 settings = get_settings()
 

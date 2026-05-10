@@ -11,8 +11,8 @@ from functools import lru_cache
 from loguru import logger
 from sentence_transformers import util
 
-from src.core.config import get_settings
-from src.ingestion.embeddings import get_embedder
+from src.config.settings import get_settings
+from src.ml.embedding.embedder import get_embedder
 
 settings = get_settings()
 
@@ -126,7 +126,7 @@ def _extract_medical_entities(text: str) -> set[str]:
 def detect_hallucinations(
     answer: str,
     chunks: list[dict],
-    similarity_threshold: float = 0.45,
+    similarity_threshold: float = None,
     numerical_strict: bool = True,
 ) -> HallucinationResult:
     """
@@ -135,12 +135,16 @@ def detect_hallucinations(
     Args:
         answer: The LLM-generated answer text
         chunks: List of source chunks with 'chunk_text' field
-        similarity_threshold: Min semantic similarity to consider grounded (0-1)
+        similarity_threshold: Min semantic similarity to consider grounded (0-1).
+            Defaults to config value (0.75 recommended for medical RAG).
         numerical_strict: If True, require exact numerical matches
 
     Returns:
         HallucinationResult with flagged claims and overall score
     """
+    # Use config threshold if not specified
+    if similarity_threshold is None:
+        similarity_threshold = settings.hallucination_threshold
     if not answer or not chunks:
         return HallucinationResult(
             hallucination_score=1.0 if answer else 0.0,

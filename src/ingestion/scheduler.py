@@ -4,6 +4,9 @@ Runs scheduled ingestion jobs for all configured medical data sources.
 
 Uses APScheduler (AsyncIOScheduler) with cron triggers defined in Settings.
 Each source runs its own cron job so schedules can be tuned independently.
+
+Note: Parser-based scheduled ingestion is currently disabled.
+Use directory-based ingestion with the CLI instead.
 """
 
 from __future__ import annotations
@@ -24,13 +27,10 @@ except ImportError:
         "Install with: pip install apscheduler"
     )
 
-from src.core.config import get_settings
-from src.ingestion.parsers.cdc import CDCParser
-from src.ingestion.parsers.cochrane import CochraneParser
-from src.ingestion.parsers.pubmed import PubMedParser
-from src.ingestion.parsers.statpearls import StatPearlsParser
-from src.ingestion.parsers.who import WHOParser
-from src.ingestion.pipeline_v3 import run_pipeline_v3_from_parser
+from src.config.settings import get_settings
+
+# Parser-based scheduled ingestion is disabled - use CLI-based ingestion instead
+_PARSER_BASED_INGESTION_AVAILABLE = False
 
 settings = get_settings()
 
@@ -81,58 +81,43 @@ _STATPEARLS_QUERIES = [
 
 
 async def _run_pubmed_sync() -> None:
+    if not _PARSER_BASED_INGESTION_AVAILABLE:
+        logger.warning("[scheduler] PubMed sync skipped - parser-based ingestion unavailable")
+        return
     logger.info("[scheduler] Starting PubMed weekly sync")
-    for query in _PUBMED_QUERIES:
-        try:
-            await run_pipeline_v3_from_parser(
-                PubMedParser, query, max_results=100, concurrency=3
-            )
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.error(f"[scheduler] PubMed job failed for '{query}': {exc}")
+    # TODO: Re-implement when parser-based ingestion is available
 
 
 async def _run_cochrane_sync() -> None:
+    if not _PARSER_BASED_INGESTION_AVAILABLE:
+        logger.warning("[scheduler] Cochrane sync skipped - parser-based ingestion unavailable")
+        return
     logger.info("[scheduler] Starting Cochrane monthly sync")
-    for query in _COCHRANE_QUERIES:
-        try:
-            await run_pipeline_v3_from_parser(
-                CochraneParser, query, max_results=50, concurrency=2
-            )
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.error(f"[scheduler] Cochrane job failed for '{query}': {exc}")
+    # TODO: Re-implement when parser-based ingestion is available
 
 
 async def _run_who_sync() -> None:
+    if not _PARSER_BASED_INGESTION_AVAILABLE:
+        logger.warning("[scheduler] WHO sync skipped - parser-based ingestion unavailable")
+        return
     logger.info("[scheduler] Starting WHO monthly sync")
-    for query in _WHO_QUERIES:
-        try:
-            await run_pipeline_v3_from_parser(
-                WHOParser, query, max_results=30, concurrency=2
-            )
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.error(f"[scheduler] WHO job failed for '{query}': {exc}")
+    # TODO: Re-implement when parser-based ingestion is available
 
 
 async def _run_cdc_sync() -> None:
+    if not _PARSER_BASED_INGESTION_AVAILABLE:
+        logger.warning("[scheduler] CDC sync skipped - parser-based ingestion unavailable")
+        return
     logger.info("[scheduler] Starting CDC monthly sync")
-    for query in _CDC_QUERIES:
-        try:
-            await run_pipeline_v3_from_parser(
-                CDCParser, query, max_results=30, concurrency=2
-            )
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.error(f"[scheduler] CDC job failed for '{query}': {exc}")
+    # TODO: Re-implement when parser-based ingestion is available
 
 
 async def _run_statpearls_sync() -> None:
+    if not _PARSER_BASED_INGESTION_AVAILABLE:
+        logger.warning("[scheduler] StatPearls sync skipped - parser-based ingestion unavailable")
+        return
     logger.info("[scheduler] Starting StatPearls monthly sync")
-    for query in _STATPEARLS_QUERIES:
-        try:
-            await run_pipeline_v3_from_parser(
-                StatPearlsParser, query, max_results=20, concurrency=2
-            )
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.error(f"[scheduler] StatPearls job failed for '{query}': {exc}")
+    # TODO: Re-implement when parser-based ingestion is available
 
 
 def _parse_cron(cron_expr: str) -> dict:
@@ -150,68 +135,17 @@ def start_scheduler() -> Optional["AsyncIOScheduler"]:
 
     scheduler = AsyncIOScheduler()
 
-    try:
-        scheduler.add_job(
-            _run_pubmed_sync,
-            CronTrigger(**_parse_cron(settings.scheduler_pubmed_cron)),
-            id="pubmed_weekly_sync",
-            name="PubMed Weekly Sync",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        logger.error(f"[scheduler] Failed to schedule PubMed job: {exc}")
+    # Log that parser-based scheduled ingestion is disabled
+    logger.info(
+        "[scheduler] Parser-based scheduled ingestion is disabled. "
+        "Use directory-based ingestion with: python -m src.ingestion.run_ingestion --dir <path> --source <source>"
+    )
 
-    try:
-        scheduler.add_job(
-            _run_cochrane_sync,
-            CronTrigger(**_parse_cron(settings.scheduler_cochrane_cron)),
-            id="cochrane_monthly_sync",
-            name="Cochrane Monthly Sync",
-            replace_existing=True,
-            misfire_grace_time=7200,
-        )
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        logger.error(f"[scheduler] Failed to schedule Cochrane job: {exc}")
-
-    try:
-        scheduler.add_job(
-            _run_who_sync,
-            CronTrigger(**_parse_cron(settings.scheduler_who_cron)),
-            id="who_monthly_sync",
-            name="WHO Monthly Sync",
-            replace_existing=True,
-            misfire_grace_time=7200,
-        )
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        logger.error(f"[scheduler] Failed to schedule WHO job: {exc}")
-
-    try:
-        scheduler.add_job(
-            _run_cdc_sync,
-            CronTrigger(**_parse_cron(settings.scheduler_cdc_cron)),
-            id="cdc_monthly_sync",
-            name="CDC Monthly Sync",
-            replace_existing=True,
-            misfire_grace_time=7200,
-        )
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        logger.error(f"[scheduler] Failed to schedule CDC job: {exc}")
-
-    try:
-        scheduler.add_job(
-            _run_statpearls_sync,
-            CronTrigger(**_parse_cron(settings.scheduler_cdc_cron)),
-            id="statpearls_monthly_sync",
-            name="StatPearls Monthly Sync",
-            replace_existing=True,
-            misfire_grace_time=7200,
-        )
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        logger.error(f"[scheduler] Failed to schedule StatPearls job: {exc}")
+    # Note: All scheduled jobs are currently disabled pending re-implementation
+    # of parser-based ingestion. The CLI-based ingestion can be used instead.
 
     scheduler.start()
-    logger.info("[scheduler] Ingestion scheduler started")
+    logger.info("[scheduler] Ingestion scheduler started (parser-based jobs disabled)")
     return scheduler
 
 

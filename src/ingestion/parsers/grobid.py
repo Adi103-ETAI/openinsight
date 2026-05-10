@@ -13,8 +13,8 @@ from typing import Optional
 
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
-from src.ingestion.ner import infer_study_type
-from src.core.config import get_settings
+from src.ml.ner import infer_study_type
+from src.config.settings import get_settings
 
 settings = get_settings()
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 
 
 class SearchCache:

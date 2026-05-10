@@ -83,19 +83,41 @@
 
 | Module | Responsibility |
 |--------|----------------|
-| `pipeline_v4.py` | Main orchestration |
-| `chunker_v3.py` | Hierarchical text chunking |
-| `embedder_v2.py` | Dual embedding (dense + sparse) |
+| `pipeline.py` | Main orchestration |
+| `run_ingestion.py` | CLI entry point |
+| `tasks.py` | Celery tasks for distributed processing |
+| `scheduler.py` | Scheduled ingestion jobs |
+| `checkpoint.py` | Checkpoint/resume support for long-running jobs |
 | `dedupe.py` | Document deduplication |
-| `metadata_v2.py` | Metadata enrichment |
+| `metadata.py` | Metadata enrichment |
 | `quality.py` | Quality scoring |
-| `parsers/*` | PDF/XML parsing (GROBID, ICMR, PubMed, etc.) |
+| `vector_indexer.py` | Vector indexing to Milvus |
+| `document_db.py` | Document storage operations |
+| `deduplication.py` | Advanced deduplication logic |
+| `validation.py` | Document validation |
+| `monitoring.py` | Metrics and monitoring |
+| `parsers/*` | PDF/XML/HTML parsing (GROBID, ICMR, PubMed, OCR, etc.) |
 | `celery_app.py` | Distributed task queue |
 
-### Core (`src/core/`)
-- **config.py** - All settings from environment variables
+### ML Layer (`src/ml/`)
 
-### Utils (`src/utils/`)
+| Module | Responsibility |
+|--------|----------------|
+| `chunking/chunker.py` | Hierarchical text chunking |
+| `embedding/embedder.py` | Dual embedding (dense + sparse) |
+| `ner.py` | Named entity recognition |
+
+### Data Layer (`src/data/`)
+
+| Module | Responsibility |
+|--------|----------------|
+| `mongo/doc_store.py` | Document storage |
+| `vector/vector_store.py` | Vector storage (Milvus) |
+
+### Config (`src/config/`)
+- **settings.py** - All settings from environment variables
+
+### Services (`src/services/`)
 - **llm_client.py** - NVIDIA NIM API client
 
 ---
@@ -133,6 +155,9 @@ All config via environment variables (`.env`):
 - API keys (NVIDIA, NCBI)
 - Model names
 - Pipeline parameters (top_k, batch sizes, thresholds)
-- Feature flags (hyde, contradiction detection)
+- Feature flags (hyde, contradiction detection, tracing)
 
 See `.env.example` for all options.
+
+### Constants (`src/constants/`)
+Magic values consolidated here to avoid duplication across modules.

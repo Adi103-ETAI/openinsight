@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any
 
@@ -8,6 +9,46 @@ from pymilvus import DataType, MilvusClient
 from src.vectorstore.base import VectorStore
 from src.vectorstore.filters import FilterCondition, FilterExpression, FilterOperator
 from src.vectorstore.types import ScoredPoint, SparseVector, VectorPoint
+
+
+# Allowed field names for filtering (whitelist approach)
+ALLOWED_FILTER_FIELDS = frozenset({
+    "year",
+    "doc_type",
+    "source",
+    "source_type",
+    "evidence_level",
+    "india_relevant",
+    "has_drug_dosing",
+    "chunk_type",
+    "pmid",
+})
+
+# Pattern to detect potentially dangerous characters in filter values
+DANGEROUS_CHARS_PATTERN = re.compile(r"[\x00-\x1f\x7f-\x9f'\";\\]")
+
+
+def validate_filter_field_name(field_name: str) -> bool:
+    """
+    Validate that the filter field name is in the allowed list.
+
+    This prevents injection attacks through unknown field names.
+    """
+    return field_name in ALLOWED_FILTER_FIELDS
+
+
+def sanitize_filter_value(value: Any) -> Any:
+    """
+    Sanitize filter values to prevent injection attacks.
+
+    Removes control characters and dangerous symbols from string values.
+    """
+    if isinstance(value, str):
+        # Remove control characters and dangerous symbols
+        return DANGEROUS_CHARS_PATTERN.sub("", value)
+    if isinstance(value, (list, tuple, set)):
+        return type(value)(sanitize_filter_value(v) for v in value)
+    return value
 
 
 class MilvusVectorStore(VectorStore):
@@ -24,6 +65,7 @@ class MilvusVectorStore(VectorStore):
         sparse_field: str,
         dense_metric: str,
         sparse_metric: str,
+        is_cloud: bool = False,
     ) -> None:
         self.default_collection = default_collection
         self.dense_dim = dense_dim
@@ -32,6 +74,7 @@ class MilvusVectorStore(VectorStore):
         self.sparse_field = sparse_field
         self.dense_metric = dense_metric
         self.sparse_metric = sparse_metric
+        self.is_cloud = is_cloud  # Milvus Cloud doesn't need load_collection on each search
 
         if token.strip():
             self.client = MilvusClient(uri=uri, token=token, db_name=db_name)
@@ -139,7 +182,9 @@ class MilvusVectorStore(VectorStore):
             return []
 
         target = self._resolve_collection_name(collection_name)
-        self.client.load_collection(target)
+        # Milvus Cloud handles collection loading automatically - skip explicit load
+        if not self.is_cloud:
+            self.client.load_collection(target)
         results = self.client.search(
             collection_name=target,
             data=[[float(v) for v in dense_vector]],
@@ -164,7 +209,9 @@ class MilvusVectorStore(VectorStore):
             return []
 
         target = self._resolve_collection_name(collection_name)
-        self.client.load_collection(target)
+        # Milvus Cloud handles collection loading automatically - skip explicit load
+        if not self.is_cloud:
+            self.client.load_collection(target)
         results = self.client.search(
             collection_name=target,
             data=[sparse_vector.to_mapping()],
@@ -216,7 +263,16 @@ class MilvusVectorStore(VectorStore):
 
     def _condition_to_expr(self, condition: FilterCondition) -> str:
         field_name = condition.field
-        value = condition.value
+
+        # Validate field name against whitelist
+        if not validate_filter_field_name(field_name):
+            raise ValueError(
+                f"Invalid filter field: '{field_name}'. "
+                f"Allowed fields: {', '.join(sorted(ALLOWED_FILTER_FIELDS))}"
+            )
+
+        # Sanitize the value to prevent injection
+        value = sanitize_filter_value(condition.value)
 
         if condition.operator == FilterOperator.EQ:
             return f"{field_name} == {self._format_value(value)}"

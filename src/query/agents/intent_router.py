@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 
 
 class QueryComplexity(str, Enum):

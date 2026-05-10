@@ -6,8 +6,8 @@ from typing import Any
 
 import httpx
 
-from src.core.config import get_settings
-from src.ingestion.embedder_v2 import DualEmbedderV2
+from src.config.settings import get_settings
+from src.ml.embedding.embedder import DualEmbedderV2
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector
 

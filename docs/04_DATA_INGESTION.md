@@ -237,14 +237,17 @@ The ingestion pipeline transforms raw source documents into searchable vector em
 ## Running Ingestion
 
 ```bash
-# Seed ICMR PDFs
-python scripts/seed_icmr.py
+# Run ingestion task via Celery
+python -m src.ingestion.tasks run
 
-# Seed PubMed
-python scripts/seed_pubmed.py
+# Or run directly
+python -m src.ingestion.run_ingestion
 
-# Re-ingest all
-python scripts/reingest_v2.py
+# Re-ingest all documents
+python -m src.ingestion.run_ingestion --reingest
+
+# Ingest from specific sources
+python -m src.ingestion.run_ingestion --sources icmr pubmed
 ```
 
 ---

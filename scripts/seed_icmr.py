@@ -7,7 +7,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ingestion.parsers.icmr import ICMRParser
-from src.ingestion.pipeline_v4 import IngestionPipelineV4
+from src.ingestion.pipeline import IngestionPipeline
 
 
 def main() -> None:
@@ -23,7 +23,7 @@ def main() -> None:
 
     print(f"Found {len(pdf_files)} PDF files")
 
-    pipeline = IngestionPipelineV4()
+    pipeline = IngestionPipeline()
 
     summary = asyncio.run(
         pipeline.ingest_directory(

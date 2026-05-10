@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from .retriever import RetrievedChunk
 
 

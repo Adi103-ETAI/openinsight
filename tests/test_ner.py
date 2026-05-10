@@ -2,7 +2,7 @@
 Tests for the NER module.
 """
 import pytest
-from src.ingestion.ner import (
+from src.ml.ner import (
     extract_entities,
     classify_content_type,
     infer_study_type,

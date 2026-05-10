@@ -11,22 +11,21 @@ Tests cover:
 
 import pytest
 
-from src.query.confidence_scorer import (
+from src.query.validation.confidence_scorer import (
     ConfidenceBreakdown,
     score_confidence,
 )
-from src.query.hallucination_detector import (
+from src.query.validation.hallucination_detector import (
     HallucinationResult,
     detect_hallucinations,
 )
-from src.query.medical_safety import (
-    SafetyCheckResult,
-    check_safety,
+from src.query.validation.medical_safety import (
+    MedicalSafetyResult,
+    check_medical_safety,
 )
-from src.query.validator import (
+from src.query.validation.validator import (
     ValidationResult,
     validate_answer,
-    enhance_response,
 )
 
 

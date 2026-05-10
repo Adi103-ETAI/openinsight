@@ -4,9 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.query.prompts import SYSTEM_PROMPT
 from src.query.validation.validator import enhance_response, validate_answer
 from src.query.search.cache import SearchCache
@@ -21,10 +21,52 @@ from src.utils.llm_client import get_nim_client
 router = APIRouter()
 settings = get_settings()
 
+# Query sanitization patterns
+_DANGEROUS_PATTERNS = re.compile(
+    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|'  # Control characters
+    r'<script|script>|javascript:|on\w+=|'  # XSS patterns
+    r'\$\{|__|SELECT|UNION|INSERT|UPDATE|DELETE|DROP',  # Injection patterns (case insensitive)
+    re.IGNORECASE
+)
+_WHITESPACE_PATTERN = re.compile(r'\s+')
+
+
+def _sanitize_query(query: str) -> str:
+    """Sanitize query by removing dangerous patterns and normalizing whitespace."""
+    # Remove control characters
+    sanitized = ''.join(char for char in query if ord(char) >= 32 or char in '\n\t')
+    # Normalize whitespace
+    sanitized = _WHITESPACE_PATTERN.sub(' ', sanitized).strip()
+    return sanitized
+
 
 class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 6
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Search query string (1-500 characters)"
+    )
+    top_k: int = Field(
+        default=6,
+        ge=1,
+        le=50,
+        description="Number of results to return (1-50)"
+    )
+
+    @field_validator('query')
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        # Check for dangerous patterns
+        if _DANGEROUS_PATTERNS.search(v):
+            raise ValueError("Query contains potentially dangerous characters or patterns")
+        # Sanitize and normalize
+        return _sanitize_query(v)
+
+    @field_validator('top_k')
+    @classmethod
+    def validate_top_k(cls, v: int) -> int:
+        return max(1, min(50, v))
 
 
 class SearchResponse(BaseModel):
@@ -112,7 +154,8 @@ async def _generate_answer(query: str, context: str) -> str:
 
 @router.post("", response_model=SearchResponse)
 async def search_endpoint(payload: SearchRequest, request: Request) -> SearchResponse:
-    query = payload.query.strip()
+    # Query is already sanitized and validated by SearchRequest validator
+    query = payload.query
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 

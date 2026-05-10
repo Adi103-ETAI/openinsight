@@ -38,17 +38,18 @@ OpenInsight is a clinical decision support platform for Indian physicians. A doc
 │                         API LAYER                               │
 │  POST /search          POST /deep-insights                      │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-         ┌────────────────────┼────────────────────┐
-         ▼                    ▼                    ▼
+                               │
+          ┌────────────────────┼────────────────────┐
+          ▼                    ▼                    ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
 │  query/search/  │  │  query/agents/  │  │  ingestion/     │
 │   Simple RAG    │  │  DeepInsights   │  │  Data Pipeline  │
 │                 │  │                 │  │                 │
-│ - retriever     │  │ - intent_router │  │ - pipeline_v4   │
-│ - fusion        │  │ - query_decomp  │  │ - chunker_v3    │
-│ - reranker      │  │ - orchestrator  │  │ - embedder_v2   │
+│ - retriever     │  │ - intent_router │  │ - pipeline      │
+│ - fusion        │  │ - query_decomp  │  │ - tasks         │
+│ - reranker      │  │ - orchestrator  │  │ - scheduler     │
 │ - mmr           │  │                 │  │ - parsers       │
+│ - query_underst │  │                 │  │                 │
 └────────┬────────┘  └────────┬────────┘  └────────┬────────┘
          │                    │                    │
          └────────────────────┼────────────────────┘
@@ -97,7 +98,8 @@ src/
 │   │   ├── reranker.py       # Cross-encoder reranking
 │   │   ├── mmr.py            # Diversity selection
 │   │   ├── query_understanding.py  # Intent classification
-│   │   └── query_rewriter_v2.py    # LLM query rewriting
+│   │   ├── contradiction_detector.py  # Evidence contradiction detection
+│   │   └── context_builder.py # Query context builder
 │   │
 │   ├── agents/               # DeepInsights
 │   │   ├── intent_router.py  # Simple vs complex detection
@@ -114,22 +116,48 @@ src/
 │   └── prompts.py            # LLM prompts
 │
 ├── ingestion/                # Data pipeline
-│   ├── pipeline_v4.py        # Main pipeline
-│   ├── chunker_v3.py         # Hierarchical chunking
-│   ├── embedder_v2.py        # Dual embedding
+│   ├── pipeline.py          # Main pipeline
 │   ├── dedupe.py             # Document deduplication
-│   ├── parsers/              # PDF/XML parsers
+│   ├── metadata.py           # Metadata enrichment
+│   ├── quality.py            # Quality scoring
+│   ├── vector_indexer.py     # Vector indexing (Milvus)
+│   ├── tasks.py              # Celery tasks
+│   ├── scheduler.py          # Scheduled ingestion
+│   ├── checkpoint.py         # Checkpoint/resume support
+│   ├── parsers/              # PDF/XML/HTML parsers
 │   │   ├── grobid.py
 │   │   ├── icmr.py
 │   │   ├── pubmed.py
+│   │   ├── who.py
+│   │   ├── ocr.py            # OCR fallback for scanned PDFs
 │   │   └── ...
 │   └── celery_app.py         # Distributed ingestion
 │
-├── core/
-│   └── config.py             # Settings (from .env)
+├── ml/                       # ML components
+│   ├── chunking/
+│   │   └── chunker.py        # Hierarchical chunking
+│   ├── embedding/
+│   │   └── embedder.py       # Dual embedding (dense + sparse)
+│   └── ner.py                # Named entity recognition
+│
+├── data/                     # Data layer
+│   ├── mongo/
+│   │   ├── connection.py    # MongoDB connection
+│   │   └── doc_store.py     # Document storage
+│   └── vector/
+│       └── vector_store.py  # Vector storage (Milvus)
+│
+├── config/
+│   └── settings.py          # Settings (from .env)
+│
+├── constants/
+│   └── __init__.py          # Magic values and constants
+│
+├── services/
+│   └── llm_client.py        # NVIDIA NIM client
 │
 └── utils/
-    └── llm_client.py         # NVIDIA NIM client
+    └── metrics.py           # Metrics collection
 ```
 
 ---
@@ -165,11 +193,11 @@ SPACY_MODEL=en_core_sci_md
 
 ## 6. Constants & Magic Values
 
-All magic values are consolidated in `src/core/constants.py`. Import from there to avoid duplication.
+All magic values are consolidated in `src/constants/`. Import from there to avoid duplication.
 
 **Key constants:**
 ```python
-from src.core.constants import (
+from src.constants import (
     EvidenceBoost,      # Boosts for evidence levels (1a→1.35, 1b→1.25, etc.)
     RecencyBoost,      # Boosts for publication recency
     RRF_K,             # Reciprocal Rank Fusion constant (default: 60)
@@ -266,14 +294,17 @@ Source Files → Parser → Deduplication → Metadata Enrichment
 
 ### Running Ingestion
 ```bash
-# ICMR PDFs
-python scripts/seed_icmr.py
+# Run ingestion task via Celery
+python -m src.ingestion.tasks run
 
-# PubMed
-python scripts/seed_pubmed.py
+# Or run directly
+python -m src.ingestion.run_ingestion
 
-# Re-ingest all
-python scripts/reingest_v2.py
+# Re-ingest all documents
+python -m src.ingestion.run_ingestion --reingest
+
+# Ingest from specific sources
+python -m src.ingestion.run_ingestion --sources icmr pubmed
 ```
 
 ---
@@ -342,14 +373,17 @@ python scripts/zilliz_smoke.py
 # Start API
 uvicorn src.api.main:app --reload --port 8000
 
-# Ingest ICMR PDFs
-python scripts/seed_icmr.py
+# Run ingestion directly
+python -m src.ingestion.run_ingestion
 
-# Re-ingest all
-python scripts/reingest_v2.py
+# Run ingestion via Celery
+python -m src.ingestion.tasks run
+
+# Re-ingest all documents
+python -m src.ingestion.run_ingestion --reingest
 
 # Test vector backend
-python scripts/zilliz_smoke.py
+python -c "from src.data.vector.vector_store import VectorStore; print('OK')"
 
 # Format code
 black src/

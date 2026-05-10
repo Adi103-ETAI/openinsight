@@ -12,7 +12,7 @@ from .query_decomposer import (
     QueryDecomposer,
     SubQuery,
 )
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.query.contradiction_detector import ContradictionDetector
 from src.query.search.cache import SearchCache
 from src.query.search.retriever import HybridRetriever, RetrievedChunk

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.vectorstore.base import VectorStore
 
 _VECTOR_STORE: VectorStore | None = None
@@ -28,6 +28,7 @@ def get_vector_store() -> VectorStore:
             sparse_field=settings.vector_sparse_field,
             dense_metric=settings.vector_dense_metric,
             sparse_metric=settings.vector_sparse_metric,
+            is_cloud=settings.milvus_cloud,
         )
         return _VECTOR_STORE
 

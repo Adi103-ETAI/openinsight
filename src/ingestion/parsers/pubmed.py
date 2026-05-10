@@ -5,7 +5,7 @@ from Bio import Entrez
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from src.core.config import get_settings
+from src.config.settings import get_settings
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
 
@@ -49,7 +49,12 @@ class PubMedParser(BaseParser):
         if not pmids:
             return []
 
-        sleep_seconds = 0.1 if self.settings.ncbi_api_key else 0.34
+        # Use config values for rate limiting (configurable based on API tier)
+        sleep_seconds = (
+            self.settings.pubmed_rate_limit_with_key
+            if self.settings.ncbi_api_key
+            else self.settings.pubmed_rate_limit_seconds
+        )
         time.sleep(sleep_seconds)
 
         with Entrez.efetch(

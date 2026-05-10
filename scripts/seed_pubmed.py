@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ingestion.parsers.pubmed import PubMedParser
-from src.ingestion.pipeline_v4 import IngestionPipelineV4
+from src.ingestion.pipeline import IngestionPipeline
 
 INDIA_QUERIES = [
     "tuberculosis drug resistant India treatment 2020 2021 2022 2023",
@@ -37,9 +37,9 @@ def main() -> None:
         if idx < len(INDIA_QUERIES):
             time.sleep(2)
 
-    print("Note: PubMed seeding now uses directory-based ingestion.")
-    print("Please run: python -m src.ingestion.run_ingestion_v2 --source pubmed")
     print(f"Documents collected: {len(all_documents)}")
+    print("Use directory-based ingestion with:")
+    print("  python -m src.ingestion.run_ingestion --dir <path> --source pubmed")
 
 
 if __name__ == "__main__":

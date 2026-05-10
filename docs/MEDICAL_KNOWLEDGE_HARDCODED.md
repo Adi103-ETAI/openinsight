@@ -8,6 +8,8 @@ This document lists all domain-specific medical knowledge that is hardcoded in t
 
 **File:** `src/query/search/query_understanding.py`
 
+> Note: This file is located at `src/query/search/query_understanding.py` (unchanged from original location)
+
 ### DIAGNOSTIC_PATTERNS
 ```python
 DIAGNOSTIC_PATTERNS = [
@@ -152,7 +154,7 @@ INTERACTION_PATTERNS = [
 
 ## 4. Chunking Abbreviations
 
-**File:** `src/ingestion/chunker_v3.py`
+**File:** `src/ml/chunking/chunker.py`
 
 ### _ABBREVIATIONS
 ```python
@@ -174,7 +176,7 @@ _ABBREVIATIONS = {
 
 ## 5. Evidence Level Detection Patterns
 
-**File:** `src/ingestion/metadata_v2.py`
+**File:** `src/ingestion/metadata.py`
 
 ### RCT_TITLE_PATTERNS
 ```python
@@ -242,7 +244,7 @@ _LOW_VALUE_PATTERNS = [
 
 ## 7. NER Entity Patterns
 
-**File:** `src/ingestion/ner.py`
+**File:** `src/ml/ner.py`
 
 ### DRUG_PATTERNS
 ```python
