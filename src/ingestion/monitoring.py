@@ -90,8 +90,8 @@ class IngestionMonitor:
 
     async def get_storage_stats(self) -> dict:
         """Return document and chunk counts per source_type."""
-        docs_col = self._db["documents"]
-        chunks_col = self._db["chunks"]
+        docs_col = self._db["documents_v2"]
+        chunks_col = self._db["chunks_v2"]
 
         pipeline = [{"$group": {"_id": "$source_type", "count": {"$sum": 1}}}]
         doc_counts: dict[str, int] = {}

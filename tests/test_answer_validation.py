@@ -20,12 +20,13 @@ from src.query.validation.hallucination_detector import (
     detect_hallucinations,
 )
 from src.query.validation.medical_safety import (
-    MedicalSafetyResult,
-    check_medical_safety,
+    SafetyCheckResult,
+    check_safety,
 )
 from src.query.validation.validator import (
     ValidationResult,
     validate_answer,
+    enhance_response,
 )
 
 

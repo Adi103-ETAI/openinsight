@@ -70,7 +70,7 @@ class DocumentDeduplicator:
             doc.get("content", ""),
         ]
         joined = "|".join(p.strip() for p in content_parts if p.strip())
-        return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
     async def get_existing_doc_ids(self, source_type: str) -> set[str]:
         """Get all existing doc_ids for a source type."""

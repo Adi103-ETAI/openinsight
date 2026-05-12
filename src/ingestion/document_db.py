@@ -80,4 +80,5 @@ class ChunkRecord(BaseModel):
     evidence_level: int = 5
     page_number: Optional[int] = None
     token_count: int = 0
+    token_estimate: int = 0
     parser_version: str = "v1"

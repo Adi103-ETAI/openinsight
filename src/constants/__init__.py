@@ -42,6 +42,7 @@ class EvidenceBoost:
 class RecencyBoost:
     """Recency boost scores for ranking."""
     
+    YEAR_2026: Final[float] = 1.12
     YEAR_2025: Final[float] = 1.10
     YEAR_2024: Final[float] = 1.08
     YEAR_2023: Final[float] = 1.05
@@ -50,7 +51,9 @@ class RecencyBoost:
 
     @classmethod
     def get_boost(cls, year: int) -> float:
-        if year >= 2025:
+        if year >= 2026:
+            return cls.YEAR_2026
+        if year == 2025:
             return cls.YEAR_2025
         if year == 2024:
             return cls.YEAR_2024

@@ -103,7 +103,7 @@ class MetricsCollector:
 
     async def record_request(self, metrics: RequestMetrics) -> None:
         """Record a completed request."""
-        async with self._lock():
+        async with self._lock:
             self._requests.append(metrics)
 
     def get_aggregated(self, window_minutes: int = 60) -> AggregatedMetrics:
@@ -212,7 +212,7 @@ class DependencyHealthChecker:
             from src.config.settings import get_settings
             
             settings = get_settings()
-            client = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+            client = aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
             
             # Ping Redis
             pong = await client.ping()

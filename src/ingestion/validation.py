@@ -15,6 +15,7 @@ from src.ingestion.document_db import ChunkRecord, DocumentRecord
 VALID_SOURCE_TYPES = {
     "pubmed", "icmr", "nmc", "mohfw", "state_guideline",
     "cochrane", "who", "cdc", "nih", "statpearls",
+    "nmc_guideline", "rssdi", "research",
 }
 
 # Minimum and maximum document content length (characters)

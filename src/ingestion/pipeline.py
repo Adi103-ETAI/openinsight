@@ -35,12 +35,16 @@ ERROR_TYPE_OCR = "ocr_error"
 try:
     from tenacity import retry, stop_after_attempt, wait_exponential
 except ImportError:
+
     def retry(*_args, **_kwargs):
         def _decorator(fn):
             return fn
+
         return _decorator
+
     def stop_after_attempt(_attempts):
         return None
+
     def wait_exponential(**_kwargs):
         return None
 
@@ -150,9 +154,19 @@ class IngestionPipeline:
         """
         suffix = file_path.suffix.lower()
 
-        # XML files don't use OCR fallback
+        # XML files: use primary parser directly without OCR fallback
         if suffix == ".xml":
-            return await self._parse_with_retry(file_path, source, ERROR_TYPE_PARSE, max_retries)
+            result = await self._try_primary_parser(file_path, source)
+            if result:
+                return result
+            # XML parsing failed - store to dead letter
+            await self._store_to_dead_letter(
+                file_path,
+                ERROR_TYPE_PARSE,
+                "XML parsing failed",
+                max_retries,
+            )
+            return []
 
         # PDF files: try primary parser, then OCR fallback
         if suffix == ".pdf":
@@ -163,7 +177,10 @@ class IngestionPipeline:
                 return primary_result
 
             # Primary parser failed, try OCR fallback
-            logger.info("[pipeline] Primary parser failed, trying OCR fallback for: %s", file_path.name)
+            logger.info(
+                "[pipeline] Primary parser failed, trying OCR fallback for: %s",
+                file_path.name,
+            )
             ocr_result = await self._try_ocr_parser(file_path, source)
 
             if ocr_result:
@@ -192,7 +209,9 @@ class IngestionPipeline:
             if docs:
                 return docs
         except Exception as e:
-            logger.debug("[pipeline] Primary parser failed for %s: %s", file_path.name, e)
+            logger.debug(
+                "[pipeline] Primary parser failed for %s: %s", file_path.name, e
+            )
 
         return None
 
@@ -201,7 +220,9 @@ class IngestionPipeline:
         try:
             # Check if it's a scanned PDF
             if not OCRParser.is_scanned(file_path):
-                logger.debug("[pipeline] PDF not detected as scanned: %s", file_path.name)
+                logger.debug(
+                    "[pipeline] PDF not detected as scanned: %s", file_path.name
+                )
                 return None
 
             docs = OCRParser(file_path, source_type=source).parse()
@@ -209,9 +230,7 @@ class IngestionPipeline:
                 return docs
         except Exception as e:
             logger.warning("[pipeline] OCR parser failed for %s: %s", file_path.name, e)
-            await self._store_to_dead_letter(
-                file_path, ERROR_TYPE_OCR, str(e), 1
-            )
+            await self._store_to_dead_letter(file_path, ERROR_TYPE_OCR, str(e), 1)
 
         return None
 
@@ -249,7 +268,7 @@ class IngestionPipeline:
 
                 if attempt < max_retries - 1:
                     # Exponential backoff
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
 
         # All retries exhausted - store to dead letter
         await self._store_to_dead_letter(
@@ -272,7 +291,7 @@ class IngestionPipeline:
     ) -> dict[str, int]:
         """
         Ingest documents from a directory.
-        
+
         Args:
             directory: Path to directory containing PDF/XML files
             source: Source label (pubmed, icmr, cochrane, etc.)
@@ -300,6 +319,7 @@ class IngestionPipeline:
             collection_name=self.settings.vector_collection_v2,
         )
 
+        run_started_at = datetime.utcnow()
         summary = {
             "files_total": len(files),
             "files_parsed": 0,
@@ -322,7 +342,9 @@ class IngestionPipeline:
         # Determine starting batch index
         start_batch_index = 0
         if resume:
-            resume_index = await self.checkpoint.get_resume_batch_index(source, directory)
+            resume_index = await self.checkpoint.get_resume_batch_index(
+                source, directory
+            )
             if resume_index == -2:
                 logger.info("[pipeline] Already completed: source=%s", source)
                 summary["status"] = "already_completed"
@@ -344,7 +366,7 @@ class IngestionPipeline:
 
         for start in range(0, len(files), batch_size):
             batch_index = start // batch_size
-            
+
             # Skip batches already completed (when resuming)
             if batch_index < start_batch_index:
                 logger.info(
@@ -352,7 +374,7 @@ class IngestionPipeline:
                     batch_index,
                 )
                 continue
-            
+
             batch_files = files[start : start + batch_size]
             logger.info(
                 "[pipeline] Processing batch %d (%s files)",
@@ -402,13 +424,17 @@ class IngestionPipeline:
             seen_ids = set()
             for chunk in chunks_for_batch:
                 should_skip, _ = await self.deduplicator.check_document(
-                    {"doc_id": chunk.doc_id, "title": getattr(chunk, 'title', ''), "content": getattr(chunk, 'text', '')},
-                    force_reindex=False
+                    {
+                        "doc_id": chunk.doc_id,
+                        "title": getattr(chunk, "title", ""),
+                        "content": getattr(chunk, "text", ""),
+                    },
+                    force_reindex=False,
                 )
                 if not should_skip and chunk.chunk_id not in seen_ids:
                     chunks_to_process.append(chunk)
                     seen_ids.add(chunk.chunk_id)
-            
+
             chunks_for_batch = chunks_to_process
             summary["chunks_deduped"] = original_count - len(chunks_for_batch)
 
@@ -417,10 +443,13 @@ class IngestionPipeline:
                 score_chunks(chunks_for_batch)
                 before_quality = len(chunks_for_batch)
                 chunks_for_batch = [
-                    c for c in chunks_for_batch 
+                    c
+                    for c in chunks_for_batch
                     if c.quality_score >= self.settings.quality_score_threshold
                 ]
-                summary["chunks_quality_filtered"] = before_quality - len(chunks_for_batch)
+                summary["chunks_quality_filtered"] = before_quality - len(
+                    chunks_for_batch
+                )
 
             if not chunks_for_batch:
                 continue
@@ -443,11 +472,16 @@ class IngestionPipeline:
                     break
                 except Exception as e:
                     embed_error = e
-                    logger.warning(f"[pipeline] Embedding attempt {attempt + 1} failed: {e}")
+                    logger.warning(
+                        f"[pipeline] Embedding attempt {attempt + 1} failed: {e}"
+                    )
 
             if dense_embeddings is None:
                 # Embedding failed after all retries - store docs to dead letter
-                logger.error("[pipeline] Embedding failed after %d retries, storing to dead letter", max_embed_retries)
+                logger.error(
+                    "[pipeline] Embedding failed after %d retries, storing to dead letter",
+                    max_embed_retries,
+                )
                 for entry in docs_for_batch:
                     doc_id = entry["doc"].get("doc_id", "unknown")
                     await self._store_to_dead_letter(
@@ -515,27 +549,24 @@ class IngestionPipeline:
             )
 
         summary["files_failed"] = summary["files_total"] - summary["files_parsed"]
-        
+
         # Save metrics (from v3)
         metrics = RunMetrics(
             run_id=str(uuid4()),
-            source=source,
-            start_time=datetime.utcnow(),
-            end_time=datetime.utcnow(),
-            files_total=summary["files_total"],
-            files_parsed=summary["files_parsed"],
-            files_failed=summary["files_failed"],
-            docs_stored=summary["document_stored"],
+            started_at=run_started_at,
+            source_type=source,
+            documents_fetched=summary["files_parsed"],
+            documents_stored=summary["documents_stored"],
             chunks_created=summary["chunks_created"],
-            chunks_indexed=summary["chunks_indexed"],
-            chunks_deduped=summary.get("chunks_deduped", 0),
-            chunks_quality_filtered=summary.get("chunks_quality_filtered", 0),
+            chunks_embedded=summary["chunks_indexed"],
+            chunks_skipped_quality=summary.get("chunks_quality_filtered", 0),
         )
+        metrics.finish(status="completed")
         await self.monitor.save_run(metrics)
-        
+
         # Mark checkpoint as complete
         await self.checkpoint.mark_complete(source, directory)
-        
+
         logger.info("[pipeline] Ingestion complete: %s", summary)
         return summary
 
@@ -568,12 +599,16 @@ class IngestionPipeline:
         # Process results and track failures
         for file_path, result in zip(file_paths, results):
             if isinstance(result, Exception):
-                logger.error("[pipeline] Parse worker failed: %s - %s", file_path.name, result)
+                logger.error(
+                    "[pipeline] Parse worker failed: %s - %s", file_path.name, result
+                )
                 failed_files.append((file_path, str(result)))
                 continue
             if not result:
                 # Empty result means parser failed to extract content
-                logger.warning("[pipeline] No content extracted from: %s", file_path.name)
+                logger.warning(
+                    "[pipeline] No content extracted from: %s", file_path.name
+                )
                 failed_files.append((file_path, "No content extracted"))
                 continue
             parsed.extend(result)
@@ -616,7 +651,9 @@ class IngestionPipeline:
             if docs:
                 return docs
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            logger.warning("[pipeline] Primary parser failed for %s: %s", file_path.name, exc)
+            logger.warning(
+                "[pipeline] Primary parser failed for %s: %s", file_path.name, exc
+            )
             # Continue to OCR fallback
 
         # Primary parser failed or returned empty - try OCR fallback
@@ -625,10 +662,14 @@ class IngestionPipeline:
                 logger.info("[pipeline] Trying OCR fallback for: %s", file_path.name)
                 ocr_docs = OCRParser(file_path, source_type=source).parse()
                 if ocr_docs:
-                    logger.info("[pipeline] OCR fallback succeeded for: %s", file_path.name)
+                    logger.info(
+                        "[pipeline] OCR fallback succeeded for: %s", file_path.name
+                    )
                     return ocr_docs
         except (RuntimeError, ValueError, TypeError, OSError) as ocr_exc:
-            logger.error("[pipeline] OCR fallback failed for %s: %s", file_path.name, ocr_exc)
+            logger.error(
+                "[pipeline] OCR fallback failed for %s: %s", file_path.name, ocr_exc
+            )
 
         # Both parsers failed - will be tracked for dead letter queue
         logger.error("[pipeline] All parsers failed for: %s", file_path.name)
@@ -776,6 +817,10 @@ class IngestionPipeline:
                     out.get("url", ""), out.get("title", ""), out.get("content", "")
                 )
         out["doc_id"] = doc_id
+
+        content_parts = [out.get("title", ""), out.get("abstract", ""), out.get("content", "")]
+        content_hash = hashlib.sha256("|".join(p.strip() for p in content_parts if p.strip()).encode("utf-8")).hexdigest()
+        out["content_hash"] = content_hash
 
         return out
 

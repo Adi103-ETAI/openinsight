@@ -13,10 +13,12 @@ from loguru import logger
 
 
 @lru_cache(maxsize=1)
-def get_embedder() -> SentenceTransformer:
-    """Get singleton embedder instance for backward compatibility."""
-    logger.info("Loading embedding model via get_embedder()")
-    model = SentenceTransformer(get_settings().embedding_model)
+def get_embedder() -> "DualEmbedderV2":
+    """Get singleton embedder instance for query operations."""
+    from src.config.settings import get_settings
+    settings = get_settings()
+    logger.info(f"Loading embedding model: {settings.dense_model_name or settings.embedding_model}")
+    model = DualEmbedderV2(settings.dense_model_name or settings.embedding_model)
     logger.info("Embedding model loaded.")
     return model
 
@@ -24,15 +26,15 @@ def get_embedder() -> SentenceTransformer:
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts. Returns list of float vectors."""
     model = get_embedder()
-    vectors = model.encode(texts, batch_size=32, show_progress_bar=True, normalize_embeddings=True)
+    vectors = model.embed_batch(texts, batch_size=32)
     return vectors.tolist()
 
 
 def embed_query(text: str) -> list[float]:
     """Embed a single query string."""
     model = get_embedder()
-    vector = model.encode([text], normalize_embeddings=True)
-    return vector[0].tolist()
+    vector = model.embed_query(text)
+    return vector.tolist()
 
 
 class DualEmbedderV2:
@@ -200,35 +202,3 @@ class DualEmbedderV2:
         if len(term) > 6:
             return 2.0
         return 1.0
-
-
-# Singleton embedder instance for query operations
-_embedder_instance = None
-
-
-@lru_cache(maxsize=1)
-def get_embedder() -> DualEmbedderV2:
-    """
-    Get a singleton embedder instance for query operations.
-    Uses lru_cache to ensure only one model is loaded.
-    """
-    from src.config.settings import get_settings
-    settings = get_settings()
-    logger.info(f"Loading embedding model: {settings.dense_model_name or settings.embedding_model}")
-    model = DualEmbedderV2(settings.dense_model_name or settings.embedding_model)
-    logger.info("Embedding model loaded.")
-    return model
-
-
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts. Returns list of float vectors."""
-    model = get_embedder()
-    vectors = model.embed_batch(texts, batch_size=32)
-    return vectors.tolist()
-
-
-def embed_query(text: str) -> list[float]:
-    """Embed a single query string."""
-    model = get_embedder()
-    vector = model.embed_query(text)
-    return vector.tolist()

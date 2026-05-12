@@ -5,8 +5,18 @@ import asyncio
 import sys
 from pathlib import Path
 
+from src.ingestion.pipeline import IngestionPipeline
 
-SOURCES = ["pubmed", "icmr", "cochrane", "nmc_guideline", "rssdi", "who", "cdc", "statpearls"]
+SOURCES = [
+    "pubmed",
+    "icmr",
+    "cochrane",
+    "nmc_guideline",
+    "rssdi",
+    "who",
+    "cdc",
+    "statpearls",
+]
 
 
 # Handle source list before importing pipeline
@@ -30,122 +40,109 @@ Examples:
   %(prog)s --source-list
 
 Available sources: {', '.join(SOURCES)}
-        """
+        """,
     )
-    
+
     # Input options
     input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--dir", help="Directory containing PDF/XML files")
     input_group.add_argument(
-        "--dir", 
-        help="Directory containing PDF/XML files"
+        "--single", help="Process a single file instead of directory"
     )
     input_group.add_argument(
-        "--single",
-        help="Process a single file instead of directory"
+        "--source-list", action="store_true", help="List available sources and exit"
     )
-    input_group.add_argument(
-        "--source-list",
-        action="store_true",
-        help="List available sources and exit"
-    )
-    
+
     # Source
     parser.add_argument(
-        "--source",
-        choices=SOURCES,
-        help="Source label for metadata and parser routing"
+        "--source", choices=SOURCES, help="Source label for metadata and parser routing"
     )
-    
+
     # Processing options
     parser.add_argument(
-        "--workers", "-w",
+        "--workers",
+        "-w",
         type=int,
         default=6,
-        help="Number of parallel workers (default: 6)"
+        help="Number of parallel workers (default: 6)",
     )
     parser.add_argument(
-        "--batch-size", "-b",
+        "--batch-size",
+        "-b",
         type=int,
         default=10,
-        help="Number of files to process per batch (default: 10)"
+        help="Number of files to process per batch (default: 10)",
     )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="Limit number of files to process"
-    )
-    
+    parser.add_argument("--limit", type=int, help="Limit number of files to process")
+
     # Pipeline control
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Parse & chunk without embedding/indexing"
+        help="Parse & chunk without embedding/indexing",
     )
     parser.add_argument(
         "--skip-embed",
         action="store_true",
-        help="Skip embedding (just parse & store in Mongo)"
+        help="Skip embedding (just parse & store in Mongo)",
     )
     parser.add_argument(
         "--skip-index",
         action="store_true",
-        help="Skip vector indexing (just store in Mongo)"
+        help="Skip vector indexing (just store in Mongo)",
     )
     parser.add_argument(
         "--recreate",
         action="store_true",
-        help="Recreate the vector collection before ingestion"
+        help="Recreate the vector collection before ingestion",
     )
-    
+
     # Checkpoint options
     parser.add_argument(
-        "--resume/--no-resume",
+        "--resume",
+        action="store_true",
         default=True,
-        help="Enable/disable checkpoint resume (default: enabled)"
+        help="Resume from checkpoint (default: enabled)",
     )
     parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Reset checkpoint and start fresh"
+        "--no-resume",
+        action="store_false",
+        dest="resume",
+        help="Disable checkpoint resume",
     )
-    
+    parser.add_argument(
+        "--reset", action="store_true", help="Reset checkpoint and start fresh"
+    )
+
     # Output options
-    parser.add_argument(
-        "--stats",
-        action="store_true",
-        help="Show detailed statistics"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Verbose output"
-    )
-    
+    parser.add_argument("--stats", action="store_true", help="Show detailed statistics")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
     return parser
 
 
-async def _main_async() -> args:
+async def _main_async() -> None:
     args = _build_parser().parse_args()
-    
+
     # Handle source list
     if args.source_list:
         print("Available sources:")
         for s in SOURCES:
             print(f"  - {s}")
         sys.exit(0)
-    
+
     # Validate source is provided
     if not args.source:
         print("Error: --source is required", file=sys.stderr)
         sys.exit(1)
-    
+
     # Handle single file
     if args.single:
         args.dir = str(Path(args.single).parent)
         args.single = True
     else:
         args.single = False
-    
+
     # Build pipeline kwargs
     pipeline_kwargs = {
         "source": args.source,
@@ -154,51 +151,31 @@ async def _main_async() -> args:
         "resume": args.resume,
         "reset": args.reset,
     }
-    
+
     if args.limit:
         pipeline_kwargs["limit"] = args.limit
-    
+
     # Run pipeline
     pipeline = IngestionPipeline()
-    
+
     if args.dry_run:
         print("🔍 Dry run mode - parsing & chunking only")
         summary = await pipeline.ingest_directory(
-            directory=args.dir,
-            skip_embed=True,
-            skip_index=True,
-            **pipeline_kwargs
-        )
-    elif args.skip_embed:
-        print("📝 Parse & store mode - skipping embedding")
-        summary = await pipeline.ingest_directory(
-            directory=args.dir,
-            skip_embed=True,
-            **pipeline_kwargs
-        )
-    elif args.skip_index:
-        print("💾 Parse & embed mode - skipping vector indexing")
-        summary = await pipeline.ingest_directory(
-            directory=args.dir,
-            skip_index=True,
-            **pipeline_kwargs
+            directory=args.dir, **pipeline_kwargs
         )
     else:
         print("🚀 Full pipeline - parse, chunk, embed, index")
-        summary = await pipeline.ingest_directory(
-            directory=args.dir,
-            **pipeline_kwargs
-        )
-    
+        summary = await pipeline.ingest_directory(directory=args.dir, **pipeline_kwargs)
+
     # Output results
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("✅ Ingestion complete")
-    print("="*50)
-    
+    print("=" * 50)
+
     for key, value in summary.items():
         print(f"  {key}: {value}")
-    
-    if args.stats and hasattr(pipeline, 'get_stats'):
+
+    if args.stats and hasattr(pipeline, "get_stats"):
         stats = pipeline.get_stats()
         print("\n📊 Statistics:")
         for key, value in stats.items():

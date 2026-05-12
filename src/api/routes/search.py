@@ -16,7 +16,9 @@ from src.query.search.mmr import maximal_marginal_relevance
 from src.query.search.query_understanding import QueryUnderstanding
 from src.query.search.reranker import CrossEncoderReranker
 from src.query.search.retriever import HybridRetriever
-from src.utils.llm_client import get_nim_client
+import re
+
+from src.services.llm_client import get_nim_client
 
 router = APIRouter()
 settings = get_settings()
