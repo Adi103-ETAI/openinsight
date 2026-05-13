@@ -5,9 +5,11 @@ from typing import Any
 
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import SparseVector, VectorPoint
+from src.config.settings import get_settings
 
 
-COLLECTION_NAME = "openinsight_v2"
+def _get_collection_name() -> str:
+    return get_settings().vector_collection_v2
 
 
 class VectorIndexer:
@@ -15,8 +17,10 @@ class VectorIndexer:
         self.store = get_vector_store()
 
     def create_collection(
-        self, recreate: bool = False, collection_name: str = COLLECTION_NAME
+        self, recreate: bool = False, collection_name: str | None = None
     ) -> None:
+        if collection_name is None:
+            collection_name = _get_collection_name()
         self.store.ensure_collection(recreate=recreate, collection_name=collection_name)
 
     def upsert_chunks(
@@ -24,8 +28,10 @@ class VectorIndexer:
         chunks: list[Any],
         dense_embeddings: Any,
         sparse_vectors: list[dict[str, list[int] | list[float]]],
-        collection_name: str = COLLECTION_NAME,
+        collection_name: str | None = None,
     ) -> int:
+        if collection_name is None:
+            collection_name = _get_collection_name()
         if len(chunks) != len(sparse_vectors) or len(chunks) != len(dense_embeddings):
             raise ValueError(
                 "chunks, dense_embeddings, and sparse_vectors must have matching lengths"

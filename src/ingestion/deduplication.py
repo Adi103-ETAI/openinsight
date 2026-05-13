@@ -61,7 +61,7 @@ async def is_duplicate(
         (True, existing_document_id)  — if duplicate found
         (False, None)                 — if document is new
     """
-    documents_col = db["documents"]
+    documents_col = db["documents_v2"]
 
     # 1. DOI match
     doi = (document.doi or "").strip()

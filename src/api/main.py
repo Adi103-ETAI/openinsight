@@ -30,10 +30,12 @@ class RequestIDMiddleware:
         # Add to request state for access in handlers
         request.state.request_id = request_id
 
+        # Bind request_id to logger for this request context using loguru's bind()
+        request_logger = logger.bind(request_id=request_id)
+
         # Log request start with structured context
-        logger.info(
-            "request_started | request_id={request_id} | method={method} | path={path}",
-            request_id=request_id,
+        request_logger.info(
+            "request_started | method={method} | path={path}",
             method=request.method,
             path=request.url.path,
         )
@@ -43,18 +45,16 @@ class RequestIDMiddleware:
             # Add request ID to response headers
             response.headers["X-Request-ID"] = request_id
             # Log request completion
-            logger.info(
-                "request_completed | request_id={request_id} | status={status} | method={method} | path={path}",
-                request_id=request_id,
+            request_logger.info(
+                "request_completed | status={status} | method={method} | path={path}",
                 status=response.status_code,
                 method=request.method,
                 path=request.url.path,
             )
             return response
         except Exception as exc:
-            logger.error(
-                "request_failed | request_id={request_id} | error={error} | method={method} | path={path}",
-                request_id=request_id,
+            request_logger.error(
+                "request_failed | error={error} | method={method} | path={path}",
                 error=str(exc)[:200],
                 method=request.method,
                 path=request.url.path,
@@ -68,19 +68,21 @@ class TimingMiddleware:
     async def __call__(self, request: Request, call_next):
         import time
         from datetime import datetime
-        
+
         request_id = request_id_var.get()
         start_time = time.perf_counter()
         started_at = datetime.utcnow()
+
+        # Bind request_id to logger for this request context
+        request_logger = logger.bind(request_id=request_id)
 
         try:
             response = await call_next(request)
             duration_ms = (time.perf_counter() - start_time) * 1000
 
             # Log timing info
-            logger.debug(
-                "request_timing | request_id={request_id} | duration_ms={duration_ms} | status={status}",
-                request_id=request_id,
+            request_logger.debug(
+                "request_timing | duration_ms={duration_ms} | status={status}",
                 duration_ms=round(duration_ms, 2),
                 status=response.status_code,
             )
@@ -91,9 +93,8 @@ class TimingMiddleware:
             return response
         except Exception as exc:
             duration_ms = (time.perf_counter() - start_time) * 1000
-            logger.warning(
-                "request_timing_error | request_id={request_id} | duration_ms={duration_ms} | error={error}",
-                request_id=request_id,
+            request_logger.warning(
+                "request_timing_error | duration_ms={duration_ms} | error={error}",
                 duration_ms=round(duration_ms, 2),
                 error=str(exc)[:100],
             )
@@ -135,19 +136,23 @@ from src.query.search.retriever import HybridRetriever
 def setup_logging_with_request_id():
     """Configure loguru to include request ID in all log messages."""
     from loguru import logger
+    import sys
 
-    class RequestIdFilter:
-        def __init__(self):
-            self.request_id = "unknown"
+    # Remove default handler to reconfigure with custom format
+    logger.remove()
 
-        def __call__(self, message):
-            message.record["request_id"] = get_request_id()
-            return True
-
-    logger.configure(
-        patch=True,
-        extra={"request_id": "unknown"}
+    # Add handler with custom format that includes request_id from extra
+    # The {extra[request_id]} syntax accesses the bound extra dict
+    logger.add(
+        sys.stderr,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message} | request_id={extra[request_id]}",
+        level="INFO",
+        serialize=False,
     )
+
+    # Bind initial request_id to the logger's extra context
+    # This will be dynamically updated per-request in the middleware
+    logger.configure(extra={"request_id": get_request_id()})
 
 
 app = FastAPI(

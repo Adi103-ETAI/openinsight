@@ -18,7 +18,10 @@ def maximal_marginal_relevance(
     embedder,
     lambda_param: float = 0.7,
     n_select: int = 6,
+    top_k: int | None = None,
 ) -> list[RetrievedChunk]:
+    if top_k is not None:
+        n_select = top_k
     if len(chunks) <= n_select:
         return chunks
 

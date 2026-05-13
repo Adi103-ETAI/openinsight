@@ -169,7 +169,14 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     cache: SearchCache = _get_or_create_component(request, "cache")
 
     analysis = query_understanding.analyze(query)
-    cached = await cache.get_search_result(query, analysis.metadata_filters)
+    # Convert FilterExpression to dict for cache serialization
+    filters = analysis.metadata_filters
+    filters_dict = None
+    if filters is not None and hasattr(filters, "model_dump"):
+        filters_dict = filters.model_dump()
+    elif filters is not None and hasattr(filters, "__dict__"):
+        filters_dict = dict(filters.__dict__) if not isinstance(filters, (str, int, float, bool, type(None))) else None
+    cached = await cache.get_search_result(query, filters_dict if filters_dict is not None else filters)
     if cached:
         cached["cache_hit"] = True
         return SearchResponse(**cached)
@@ -205,7 +212,7 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         reranked,
         retriever.embedder,
         lambda_param=settings.mmr_lambda,
-        n_select=min(final_k, len(reranked)) if reranked else 0,
+        top_k=min(final_k, len(reranked)) if reranked else 0,
     )
 
     if not final_chunks:
@@ -215,8 +222,16 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
             "query_intent": analysis.intent.value,
             "chunks_retrieved": 0,
             "cache_hit": False,
+            "confidence_score": 0.0,
+            "recommendation": "NEEDS_REVIEW",
+            "unverified_claims": [],
+            "safety_warnings": [],
+            "evidence_distribution": {},
+            "is_safe": True,
+            "needs_disclaimer": False,
+            "confidence_breakdown": None,
         }
-        await cache.set_search_result(query, analysis.metadata_filters, empty_response)
+        await cache.set_search_result(query, filters_dict if filters_dict is not None else filters, empty_response)
         return SearchResponse(**empty_response)
 
     context = assemble_context(final_chunks)
@@ -274,5 +289,5 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     }
     response = enhance_response(base_response, validation)
 
-    await cache.set_search_result(query, analysis.metadata_filters, response)
+    await cache.set_search_result(query, filters_dict if filters_dict is not None else filters, response)
     return SearchResponse(**response)

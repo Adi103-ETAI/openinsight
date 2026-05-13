@@ -33,7 +33,7 @@ class NVIDIAClient:
         messages: list[dict[str, str]],
         temperature: float = 0.1,
         max_tokens: int = 1024,
-    ) -> dict[str, Any]:
+    ) -> str:
         """Call NVIDIA NIM chat completions API."""
         if not self.api_key:
             raise ValueError("NVIDIA_NIM_API_KEY not configured")

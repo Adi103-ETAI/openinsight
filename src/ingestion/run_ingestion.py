@@ -152,9 +152,6 @@ async def _main_async() -> None:
         "reset": args.reset,
     }
 
-    if args.limit:
-        pipeline_kwargs["limit"] = args.limit
-
     # Run pipeline
     pipeline = IngestionPipeline()
 

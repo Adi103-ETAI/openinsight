@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import numpy as np
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src.config.settings import get_settings
 from .retriever import RetrievedChunk
+
+logger = logging.getLogger(__name__)
 
 
 class CrossEncoderReranker:
@@ -49,5 +52,6 @@ class CrossEncoderReranker:
 
             ranked = sorted(chunks, key=lambda c: c.score, reverse=True)
             return ranked[:top_k]
-        except (RuntimeError, ValueError, TypeError):
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.warning(f"Reranker failed ({exc}), falling back to score sorting")
             return sorted(chunks, key=lambda c: c.score, reverse=True)[:top_k]

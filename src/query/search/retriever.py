@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,8 @@ from src.config.settings import get_settings
 from src.ml.embedding.embedder import DualEmbedderV2
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,6 +129,7 @@ class HybridRetriever:
                 if not choices:
                     return None
                 return (choices[0].get("text") or "").strip() or None
-        except (httpx.HTTPError, RuntimeError, ValueError, TypeError):
+        except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning(f"HYDE generation failed ({exc}), falling back to original query")
             return None
 
