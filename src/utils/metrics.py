@@ -100,36 +100,48 @@ class MetricsCollector:
         self._requests: list[RequestMetrics] = []
         self._lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=2)
+        self._closed = False
 
     async def record_request(self, metrics: RequestMetrics) -> None:
         """Record a completed request."""
         async with self._lock:
             self._requests.append(metrics)
 
-    def get_aggregated(self, window_minutes: int = 60) -> AggregatedMetrics:
-        """Get aggregated metrics for the specified time window."""
-        cutoff = datetime.utcnow().timestamp() - (window_minutes * 60)
-        recent = [r for r in self._requests if r.started_at.timestamp() > cutoff]
-        
-        aggregated = AggregatedMetrics()
-        latencies = []
-        
-        for r in recent:
-            aggregated.add_request(r)
-            latencies.append(r.duration_ms)
-        
-        aggregated.compute_percentiles(sorted(latencies))
-        
-        # Keep only recent requests to prevent memory growth
-        if len(self._requests) > 10000:
-            self._requests = self._requests[-5000:]
-        
-        return aggregated
+    async def get_aggregated(self, window_minutes: int = 60) -> AggregatedMetrics:
+        """Get aggregated metrics for the specified time window (thread-safe)."""
+        async with self._lock:
+            cutoff = datetime.utcnow().timestamp() - (window_minutes * 60)
+            recent = [r for r in self._requests if r.started_at.timestamp() > cutoff]
+
+            aggregated = AggregatedMetrics()
+            latencies = []
+
+            for r in recent:
+                aggregated.add_request(r)
+                latencies.append(r.duration_ms)
+
+            aggregated.compute_percentiles(sorted(latencies))
+
+            # Keep only recent requests to prevent memory growth
+            if len(self._requests) > 10000:
+                self._requests = self._requests[-5000:]
+
+            return aggregated
 
     async def get_summary(self) -> dict[str, Any]:
         """Get a comprehensive metrics summary."""
-        aggregated = self.get_aggregated(window_minutes=60)
+        aggregated = await self.get_aggregated(window_minutes=60)
         return aggregated.to_dict()
+
+    def shutdown(self) -> None:
+        """Shutdown the executor to prevent resource leak."""
+        if not self._closed:
+            self._executor.shutdown(wait=True)
+            self._closed = True
+
+    def __del__(self) -> None:
+        """Ensure executor is shutdown on garbage collection."""
+        self.shutdown()
 
 
 class DependencyHealthChecker:

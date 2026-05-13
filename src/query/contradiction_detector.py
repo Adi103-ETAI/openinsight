@@ -175,17 +175,25 @@ class ContradictionDetector:
         )
 
     async def _load_nli_model(self):
-        """Load NLI model for medical contradiction detection."""
+        """Load NLI model for medical contradiction detection (async to avoid blocking)."""
         # Research shows NLI is critical for medical RAG (18.2% performance degradation without it)
         # Using PubMedBERT-based model trained on medical NLI
         try:
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             logger.info(f"Loading NLI model: {settings.nli_model_name}")
-            model = AutoModelForSequenceClassification.from_pretrained(
-                settings.nli_model_name
+            # Use asyncio.to_thread to load model in thread pool to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            model = await loop.run_in_executor(
+                None,
+                lambda: AutoModelForSequenceClassification.from_pretrained(
+                    settings.nli_model_name
+                )
             )
-            tokenizer = AutoTokenizer.from_pretrained(settings.nli_model_name)
+            tokenizer = await loop.run_in_executor(
+                None,
+                lambda: AutoTokenizer.from_pretrained(settings.nli_model_name)
+            )
             return {"model": model, "tokenizer": tokenizer}
         except Exception as e:
             logger.warning(f"Failed to load NLI model, using keyword fallback: {e}")

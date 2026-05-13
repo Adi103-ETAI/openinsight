@@ -98,9 +98,12 @@ class ICMRParser(BaseParser):
             ]
             cleaned.append(cleaned_row)
 
-        # Skip if table is mostly empty
+        # Skip if table is mostly empty - require at least 2 rows with content
+        # A 2x2 table has 4 cells minimum, so require >= 50% non-empty cells for small tables
+        total_cells = sum(len(row) for row in cleaned)
         non_empty = sum(1 for row in cleaned for cell in row if cell)
-        if non_empty < 4:
+        # Require at least 4 non-empty cells (a small meaningful table) OR at least 30% filled
+        if total_cells > 0 and non_empty < 4 and (non_empty / total_cells) < 0.3:
             return ""
 
         # Calculate column widths
@@ -121,9 +124,9 @@ class ICMRParser(BaseParser):
                 cell.ljust(col_widths[i]) for i, cell in enumerate(padded)
             )
             lines.append(line)
-            # Add separator after header row
+            # Add separator after header row - use same format as row (space-pipe-space)
             if row_idx == 0:
-                separator = "-+-".join("-" * col_widths[i] for i in range(num_cols))
+                separator = " | ".join("-" * col_widths[i] for i in range(num_cols))
                 lines.append(separator)
 
         return "\n".join(lines)
@@ -132,7 +135,8 @@ class ICMRParser(BaseParser):
         """
         Extract text and tables from a single page.
         Tables are extracted first with structure preserved,
-        then remaining text is extracted with table bounding boxes masked.
+        then remaining text is extracted with table bounding boxes masked
+        to avoid extracting duplicate text from table areas.
         """
         page_parts = []
 
@@ -149,15 +153,47 @@ class ICMRParser(BaseParser):
                 table_bboxes.append(table.bbox)
 
         # Extract text, masking out table areas to avoid duplication
+        # We'll extract the full text and filter out content that overlaps with tables
         if table_bboxes:
-            # Crop page to exclude table areas and extract remaining text
             try:
-                # Get text outside table bounding boxes
                 full_text = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
             except (RuntimeError, ValueError, TypeError, OSError):
                 full_text = page.extract_text() or ""
 
-            text = full_text.strip()
+            # Mask out text that overlaps with table bounding boxes
+            # by extracting text from areas outside the tables
+            text_parts = []
+            page_height = page.height
+
+            # Sort bboxes by top position
+            sorted_bboxes = sorted(table_bboxes, key=lambda b: b[1] if b else 0)
+
+            # Extract text between tables (before first table, between tables, after last table)
+            prev_bottom = 0
+            for bbox in sorted_bboxes:
+                if bbox is None:
+                    continue
+                top = bbox[1]
+                # Extract text from region before this table
+                if top > prev_bottom:
+                    try:
+                        region_text = page.crop((0, prev_bottom, page.width, top)).extract_text()
+                        if region_text:
+                            text_parts.append(region_text)
+                    except (RuntimeError, ValueError, TypeError, OSError):
+                        pass
+                prev_bottom = bbox[3]
+
+            # Extract text after the last table
+            if prev_bottom < page_height:
+                try:
+                    region_text = page.crop((0, prev_bottom, page.width, page_height)).extract_text()
+                    if region_text:
+                        text_parts.append(region_text)
+                except (RuntimeError, ValueError, TypeError, OSError):
+                    pass
+
+            text = "\n".join(text_parts).strip()
         else:
             text = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
 

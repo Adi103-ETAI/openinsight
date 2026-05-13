@@ -92,6 +92,18 @@ async def check_citations(
 
         # 1. Verify citation exists in MongoDB
         if verify_in_db and db and mongo_id:
+            # Validate mongo_id is a valid ObjectId format before querying
+            if not mongo_id or not isinstance(mongo_id, str) or len(mongo_id) != 24:
+                issues.append(
+                    CitationIssue(
+                        citation_index=citation_idx,
+                        issue_type="NOT_FOUND",
+                        severity="HIGH",
+                        details=f"Invalid citation ID format: '{title[:50]}'",
+                    )
+                )
+                continue
+
             try:
                 chunk = await db["chunks"].find_one({"_id": ObjectId(mongo_id)})
                 if not chunk:

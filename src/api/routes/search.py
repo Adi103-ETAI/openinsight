@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -22,6 +23,9 @@ from src.services.llm_client import get_nim_client
 
 router = APIRouter()
 settings = get_settings()
+
+# Component initialization lock to prevent race conditions
+_component_locks: dict[str, asyncio.Lock] = {}
 
 # Query sanitization patterns
 _DANGEROUS_PATTERNS = re.compile(
@@ -87,29 +91,41 @@ class SearchResponse(BaseModel):
     confidence_breakdown: dict[str, Any] | None = None
 
 
-def _get_or_create_component(request: Request, name: str) -> Any:
+async def _get_or_create_component(request: Request, name: str) -> Any:
+    """Thread-safe component creation with async lock to prevent race conditions."""
     components = getattr(request.app.state, "search_components", None)
     if components is None:
         request.app.state.search_components = {}
         components = request.app.state.search_components
 
+    # Fast path: component already exists
     component = components.get(name)
     if component is not None:
         return component
 
-    if name == "query_understanding":
-        component = QueryUnderstanding()
-    elif name == "retriever":
-        component = HybridRetriever()
-    elif name == "reranker":
-        component = CrossEncoderReranker()
-    elif name == "cache":
-        component = SearchCache()
-    else:
-        raise RuntimeError(f"Unknown component requested: {name}")
+    # Slow path: need to create component - use lock to prevent race condition
+    if name not in _component_locks:
+        _component_locks[name] = asyncio.Lock()
 
-    components[name] = component
-    return component
+    async with _component_locks[name]:
+        # Double-check after acquiring lock (another request may have created it)
+        component = components.get(name)
+        if component is not None:
+            return component
+
+        if name == "query_understanding":
+            component = QueryUnderstanding()
+        elif name == "retriever":
+            component = HybridRetriever()
+        elif name == "reranker":
+            component = CrossEncoderReranker()
+        elif name == "cache":
+            component = SearchCache()
+        else:
+            raise RuntimeError(f"Unknown component requested: {name}")
+
+        components[name] = component
+        return component
 
 
 def _evidence_level_to_numeric(level: Any) -> int:
@@ -161,12 +177,12 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    query_understanding: QueryUnderstanding = _get_or_create_component(
+    query_understanding: QueryUnderstanding = await _get_or_create_component(
         request, "query_understanding"
     )
-    retriever: HybridRetriever = _get_or_create_component(request, "retriever")
-    reranker: CrossEncoderReranker = _get_or_create_component(request, "reranker")
-    cache: SearchCache = _get_or_create_component(request, "cache")
+    retriever: HybridRetriever = await _get_or_create_component(request, "retriever")
+    reranker: CrossEncoderReranker = await _get_or_create_component(request, "reranker")
+    cache: SearchCache = await _get_or_create_component(request, "cache")
 
     analysis = query_understanding.analyze(query)
     # Convert FilterExpression to dict for cache serialization
@@ -216,10 +232,12 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     )
 
     if not final_chunks:
+        # Safely handle potential None intent
+        query_intent = analysis.intent.value if analysis.intent is not None else "general"
         empty_response = {
             "answer": "No relevant clinical information found in the knowledge base for this query.",
             "citations": [],
-            "query_intent": analysis.intent.value,
+            "query_intent": query_intent,
             "chunks_retrieved": 0,
             "cache_hit": False,
             "confidence_score": 0.0,
@@ -283,7 +301,7 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     base_response = {
         "answer": answer,
         "citations": citations,
-        "query_intent": analysis.intent.value,
+        "query_intent": analysis.intent.value if analysis.intent is not None else "general",
         "chunks_retrieved": len(final_chunks),
         "cache_hit": False,
     }

@@ -136,8 +136,10 @@ async def _main_async() -> None:
         print("Error: --source is required", file=sys.stderr)
         sys.exit(1)
 
-    # Handle single file
+    # Handle single file - extract directory and track single file path
+    single_file_path = None
     if args.single:
+        single_file_path = str(args.single)
         args.dir = str(Path(args.single).parent)
         args.single = True
     else:
@@ -150,6 +152,7 @@ async def _main_async() -> None:
         "batch_size": max(1, args.batch_size),
         "resume": args.resume,
         "reset": args.reset,
+        "single_file": single_file_path,  # Pass single file path to pipeline
     }
 
     # Run pipeline

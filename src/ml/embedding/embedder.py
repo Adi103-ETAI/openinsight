@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter, defaultdict
 from functools import lru_cache
@@ -192,7 +193,10 @@ class DualEmbedderV2:
         return compound_tokens + words
 
     def _term_to_index(self, term: str) -> int:
-        return abs(hash(term)) % self.VOCAB_SIZE
+        # Use SHA256 for deterministic hashing (Python's hash() is randomized per-process)
+        # This ensures consistent index generation across runs and prevents data corruption
+        digest = hashlib.sha256(term.encode("utf-8")).digest()
+        return int.from_bytes(digest[:4], "big") % self.VOCAB_SIZE
 
     def _get_idf_weight(self, term: str) -> float:
         if "_" in term:

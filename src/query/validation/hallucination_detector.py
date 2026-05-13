@@ -169,10 +169,11 @@ def detect_hallucinations(
     chunk_entities = _extract_medical_entities(all_chunk_text)
     chunk_numbers = set(_extract_numerical_claims(all_chunk_text))
 
-    # Embed all chunks
+    # Embed all chunks using DualEmbedderV2's embed_batch method
+    # Note: DualEmbedderV2 doesn't have an encode method, it uses embed_batch
     chunk_texts = [c.get("chunk_text", "") for c in chunks]
-    chunk_embeddings = model.encode(chunk_texts, convert_to_tensor=True)
-    sentence_embeddings = model.encode(sentences, convert_to_tensor=True)
+    chunk_embeddings = model.embed_batch(chunk_texts)
+    sentence_embeddings = model.embed_batch(sentences)
 
     flagged_claims: list[HallucinationFlag] = []
     verified_count = 0

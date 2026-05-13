@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+
 from src.config.settings import get_settings
 from src.vectorstore.base import VectorStore
 
 _VECTOR_STORE: VectorStore | None = None
+_VECTOR_STORE_LOCK: asyncio.Lock | None = None
 
 
 def get_vector_store() -> VectorStore:
+    """Get the vector store singleton (synchronous fallback for non-async contexts)."""
     global _VECTOR_STORE
     if _VECTOR_STORE is not None:
         return _VECTOR_STORE
@@ -33,6 +37,22 @@ def get_vector_store() -> VectorStore:
         return _VECTOR_STORE
 
     raise ValueError(f"Unsupported vector backend: {settings.vector_backend}")
+
+
+async def get_vector_store_async() -> VectorStore:
+    """Get the vector store singleton with async thread-safe initialization."""
+    global _VECTOR_STORE, _VECTOR_STORE_LOCK
+    if _VECTOR_STORE is not None:
+        return _VECTOR_STORE
+
+    if _VECTOR_STORE_LOCK is None:
+        _VECTOR_STORE_LOCK = asyncio.Lock()
+
+    async with _VECTOR_STORE_LOCK:
+        # Double-check after acquiring lock
+        if _VECTOR_STORE is not None:
+            return _VECTOR_STORE
+        return get_vector_store()
 
 
 def reset_vector_store() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from fastapi import APIRouter, HTTPException, Request, Response
 from loguru import logger
 from pydantic import BaseModel
@@ -10,15 +11,30 @@ from src.query.agents.intent_router import IntentRouter, QueryComplexity
 
 router = APIRouter()
 
-# Singleton orchestrator
+# Singleton orchestrator with thread-safe initialization
 _orchestrator: DeepInsightsOrchestrator | None = None
+_orchestrator_lock: asyncio.Lock | None = None
 
 
 def get_orchestrator() -> DeepInsightsOrchestrator:
+    """Get or create the orchestrator singleton (synchronous fallback for router init)."""
     global _orchestrator
     if _orchestrator is None:
         _orchestrator = DeepInsightsOrchestrator()
     return _orchestrator
+
+
+async def get_orchestrator_async() -> DeepInsightsOrchestrator:
+    """Thread-safe async orchestrator initialization."""
+    global _orchestrator, _orchestrator_lock
+    if _orchestrator is not None:
+        return _orchestrator
+    if _orchestrator_lock is None:
+        _orchestrator_lock = asyncio.Lock()
+    async with _orchestrator_lock:
+        if _orchestrator is None:
+            _orchestrator = DeepInsightsOrchestrator()
+        return _orchestrator
 
 
 class DeepInsightsRequest(BaseModel):
@@ -61,7 +77,7 @@ async def deep_insights_endpoint(
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator_async()
     result = await orchestrator.process(
         query=payload.query,
         top_k=payload.top_k,

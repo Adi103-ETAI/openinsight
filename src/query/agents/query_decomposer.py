@@ -130,10 +130,19 @@ Only output valid JSON:"""
             "max_tokens": 500,
         }
 
-        response = await self._client.post(url, headers=headers, json=body)
-        response.raise_for_status()
+        try:
+            response = await self._client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+        except Exception as e:
+            logger.warning(f"LLM decompose HTTP request failed: {e}")
+            return None
 
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM response as JSON: {e}")
+            return None
+
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
 
         import json
@@ -141,6 +150,7 @@ Only output valid JSON:"""
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError:
+            logger.warning(f"Failed to parse decompose response content as JSON: {content[:200]}")
             return None
 
         sub_queries = []

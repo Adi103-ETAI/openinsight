@@ -3,8 +3,10 @@ from contextvars import ContextVar
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Request ID context variable for propagation across components
 request_id_var: ContextVar[str] = ContextVar("request_id", default="unknown")
@@ -15,10 +17,14 @@ def get_request_id() -> str:
     return request_id_var.get()
 
 
-class RequestIDMiddleware:
+class RequestIDMiddleware(BaseHTTPMiddleware):
     """Middleware that generates and propagates unique request IDs."""
 
-    async def __call__(self, request: Request, call_next):
+    def __init__(self, app):
+        # Required for BaseHTTPMiddleware to work with FastAPI's add_middleware
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
         # Check for existing request ID in headers (from upstream)
         request_id = request.headers.get("X-Request-ID")
         if not request_id:
@@ -62,10 +68,14 @@ class RequestIDMiddleware:
             raise
 
 
-class TimingMiddleware:
+class TimingMiddleware(BaseHTTPMiddleware):
     """Middleware that tracks request timing and records metrics."""
 
-    async def __call__(self, request: Request, call_next):
+    def __init__(self, app):
+        # Required for BaseHTTPMiddleware to work with FastAPI's add_middleware
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
         import time
         from datetime import datetime
 
@@ -112,7 +122,7 @@ async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name
             "cache": SearchCache(),
         }
         logger.info("Search v2 singletons initialized")
-    except (RuntimeError, ValueError, TypeError) as exc:
+    except Exception as exc:
         logger.warning(f"Search v2 startup degraded; using lazy init: {exc}")
 
     yield
@@ -142,17 +152,26 @@ def setup_logging_with_request_id():
     logger.remove()
 
     # Add handler with custom format that includes request_id from extra
-    # The {extra[request_id]} syntax accesses the bound extra dict
+    # Use a custom format that safely handles missing request_id
+    def format_with_request_id(record):
+        request_id = record["extra"].get("request_id", "unknown")
+        return (
+            f"{record['time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} | "
+            f"{record['level']:<8} | "
+            f"{record['name']}:{record['function']}:{record['line']} - "
+            f"{record['message']} | request_id={request_id}"
+        )
+
     logger.add(
         sys.stderr,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message} | request_id={extra[request_id]}",
+        format=format_with_request_id,
         level="INFO",
         serialize=False,
     )
 
-    # Bind initial request_id to the logger's extra context
-    # This will be dynamically updated per-request in the middleware
-    logger.configure(extra={"request_id": get_request_id()})
+    # Note: Request ID is bound per-request in the middleware via request_logger.bind()
+    # Static configuration at module load time is not needed as request_id defaults to "unknown"
+    # The middleware will properly bind the correct request_id for each request
 
 
 app = FastAPI(
@@ -190,10 +209,10 @@ async def health_detailed():
     Verifies MongoDB, Milvus, and Redis connectivity.
     """
     from src.utils.metrics import DependencyHealthChecker
-    
+
     checker = DependencyHealthChecker()
     health_status = await checker.check_all()
-    
+
     return health_status
 
 
@@ -204,23 +223,24 @@ async def health_ready():
     Returns 503 if any critical dependency is unhealthy.
     """
     from src.utils.metrics import DependencyHealthChecker
-    
+
     checker = DependencyHealthChecker()
     health_status = await checker.check_all()
-    
+
     is_ready = health_status.get("status") == "healthy"
-    
+
     if is_ready:
-        return {
-            "status": "ready",
-            "service": "openinsight-api",
-            "timestamp": health_status.get("timestamp"),
-        }
+        return JSONResponse(
+            content={
+                "status": "ready",
+                "service": "openinsight-api",
+                "timestamp": health_status.get("timestamp"),
+            }
+        )
     else:
-        return Response(
-            content=health_status.json() if hasattr(health_status, 'json') else str(health_status),
+        return JSONResponse(
+            content=health_status,
             status_code=503,
-            media_type="application/json",
         )
 
 
@@ -231,10 +251,10 @@ async def metrics():
     Returns aggregated request metrics and latency percentiles.
     """
     from src.utils.metrics import MetricsCollector, get_metrics_collector
-    
+
     collector = get_metrics_collector()
     summary = await collector.get_summary()
-    
+
     return {
         "service": "openinsight-api",
         "window": "60 minutes",
@@ -243,4 +263,6 @@ async def metrics():
 
 
 app.include_router(search_router.router, prefix="/search", tags=["Search"])
-app.include_router(deep_insights_router.router, prefix="/deep-insights", tags=["DeepInsights"])
+app.include_router(
+    deep_insights_router.router, prefix="/deep-insights", tags=["DeepInsights"]
+)

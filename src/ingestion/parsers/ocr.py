@@ -29,17 +29,22 @@ class OCRParser(BaseParser):
 
     @staticmethod
     def is_scanned(file_path: Path) -> bool:
-        """Check if a PDF is scanned (pdfplumber returns empty text on first pages)."""
+        """Check if a PDF is scanned (pdfplumber returns empty or minimal text on most pages)."""
         try:
             import pdfplumber
 
             with pdfplumber.open(file_path) as pdf:
                 text_found = 0
-                for page in pdf.pages[:5]:
+                total_pages = min(5, len(pdf.pages))
+                for page in pdf.pages[:total_pages]:
                     text = page.extract_text() or ""
-                    if len(text.strip()) > 50:
+                    # Require some meaningful text (> 30 chars) to consider it not scanned
+                    # A threshold of 0 is too strict - legitimate empty paragraphs shouldn't trigger OCR
+                    if len(text.strip()) > 30:
                         text_found += 1
-                return text_found == 0
+                # If less than 20% of pages have text, consider it scanned
+                # This allows for some scanned PDFs that might have a few text pages
+                return text_found < (total_pages * 0.2) if total_pages > 0 else True
         except (RuntimeError, ValueError, TypeError, OSError):
             return False
 

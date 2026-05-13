@@ -14,9 +14,6 @@ from typing import Optional
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
 from src.ml.ner import infer_study_type
-from src.config.settings import get_settings
-
-settings = get_settings()
 
 
 class GROBIDParser(BaseParser):
@@ -36,6 +33,10 @@ class GROBIDParser(BaseParser):
 
     def _call_grobid(self) -> Optional[str]:
         """Send PDF to GROBID and return TEI XML response."""
+        # Get settings lazily inside method to avoid import-time failures
+        from src.config.settings import get_settings
+        settings = get_settings()
+
         url = f"{settings.grobid_url}/api/processFulltextDocument"
         try:
             with open(self.file_path, "rb") as f:

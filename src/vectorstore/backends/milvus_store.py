@@ -76,7 +76,8 @@ class MilvusVectorStore(VectorStore):
         self.sparse_metric = sparse_metric
         self.is_cloud = is_cloud  # Milvus Cloud doesn't need load_collection on each search
 
-        if token.strip():
+        # Handle None or empty token properly to avoid AttributeError
+        if token and token.strip():
             self.client = MilvusClient(uri=uri, token=token, db_name=db_name)
         else:
             self.client = MilvusClient(uri=uri, db_name=db_name)

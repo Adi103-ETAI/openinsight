@@ -288,6 +288,7 @@ class IngestionPipeline:
         batch_size: int = 10,
         resume: bool = True,
         reset: bool = False,
+        single_file: str | None = None,
     ) -> dict[str, int]:
         """
         Ingest documents from a directory.
@@ -299,18 +300,28 @@ class IngestionPipeline:
             batch_size: Number of files to process per batch
             resume: Whether to resume from last checkpoint (default: True)
             reset: Whether to reset checkpoint and start fresh (default: False)
+            single_file: If provided, process only this specific file instead of directory
         """
         input_dir = Path(directory)
         if not input_dir.exists() or not input_dir.is_dir():
             raise ValueError(f"Invalid directory: {directory}")
 
-        files = sorted(
-            [
-                p
-                for p in input_dir.rglob("*")
-                if p.is_file() and p.suffix.lower() in {".pdf", ".xml"}
-            ]
-        )
+        # Handle single file mode - process only the specified file
+        if single_file:
+            single_path = Path(single_file)
+            if single_path.exists() and single_path.is_file():
+                files = [single_path]
+            else:
+                logger.warning(f"[pipeline] Single file not found or not a file: {single_file}")
+                files = []
+        else:
+            files = sorted(
+                [
+                    p
+                    for p in input_dir.rglob("*")
+                    if p.is_file() and p.suffix.lower() in {".pdf", ".xml"}
+                ]
+            )
 
         logger.info("[pipeline] Found %s candidate files in %s", len(files), directory)
 
