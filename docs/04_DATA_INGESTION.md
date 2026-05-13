@@ -163,7 +163,7 @@ The ingestion pipeline transforms raw source documents into searchable vector em
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │  VectorIndexerV2                                                    │    │
 │  │                                                                     │    │
-│  │  Milvus Collection: openinsight_v2                                  │    │
+│  │  Milvus Collection: configurable (default: openinsight_v2)        │    │
 │  │                                                                     │    │
 │  │  Schema:                                                            │    │
 │  │    - id: VARCHAR (primary key)                                      │    │
@@ -268,10 +268,11 @@ python -m src.ingestion.run_ingestion \
 | `--dry-run` | Parse only, no embedding/indexing | false |
 | `--skip-embed` | Skip embedding | false |
 | `--skip-index` | Skip vector indexing | false |
-| `--limit N` | Limit files | none |
 | `--stats` | Show statistics | false |
 | `--resume/--no-resume` | Checkpoint resume | enabled |
 | `--reset` | Reset checkpoint | false |
+
+> **Note**: The `--limit` argument was removed from the ingestion pipeline. To limit files, use shell commands like `ls | head -n N` or filter at the directory level.
 
 ### Available Sources
 ```
@@ -293,6 +294,11 @@ INGESTION_BATCH_SIZE = 10         # Files per batch
 INGESTION_WORKERS = 4             # Thread pool workers
 INGESTION_MAX_RETRIES = 3         # Retry attempts
 
+# Collections (configurable via settings)
+VECTOR_COLLECTION_V2 = "openinsight_v2"   # Milvus collection name
+DOCUMENTS_COLLECTION = "documents_v2"       # MongoDB documents
+CHUNKS_COLLECTION = "chunks_v2"             # MongoDB chunks
+
 # Deduplication
 DEDUP_ENABLED = true
 DEDUP_TITLE_SIMILARITY = 0.9
@@ -308,7 +314,20 @@ CHUNK_MIN_TOKENS = 80
 
 # Embedding
 EMBEDDING_BATCH_SIZE = 32
+
+# PubMed API Rate Limiting (configurable per API tier)
+PUBMED_RATE_LIMIT_SECONDS = 0.34  # Without API key (~3 requests/sec)
+PUBMED_RATE_LIMIT_WITH_KEY = 0.1 # With API key (~10 requests/sec)
 ```
+
+### Rate Limiting for External APIs
+
+The CDC and WHO parsers use configurable rate limiting when accessing PubMed:
+
+- **Without NCBI API key**: Uses `pubmed_rate_limit_seconds` (default: 0.34s between requests)
+- **With NCBI API key**: Uses `pubmed_rate_limit_with_key` (default: 0.1s between requests)
+
+This allows adjusting request rates based on your NCBI API tier to avoid rate limiting errors.
 
 ---
 

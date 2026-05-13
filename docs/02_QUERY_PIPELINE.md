@@ -129,6 +129,45 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Empty Response Behavior
+
+When no relevant results are found, the search endpoint returns a complete response with all fields set to safe defaults:
+
+```json
+{
+  "answer": "No relevant clinical information found in the knowledge base for this query.",
+  "citations": [],
+  "query_intent": "...",
+  "chunks_retrieved": 0,
+  "cache_hit": false,
+  "confidence_score": 0.0,
+  "recommendation": "NEEDS_REVIEW",
+  "unverified_claims": [],
+  "safety_warnings": [],
+  "evidence_distribution": {},
+  "is_safe": true,
+  "needs_disclaimer": false,
+  "confidence_breakdown": null
+}
+```
+
+### Logging Behavior
+
+The query pipeline now includes structured logging for debugging and monitoring:
+
+- **HYDE Failures**: When HYDE (Hypothetical Document Embeddings) generation fails (network timeout, API error, etc.), the failure is logged with a warning level and the system falls back to using the original query
+- **Reranker Failures**: When the reranker fails (e.g., GPU out of memory), exceptions are logged before falling back to CPU-based score sorting
+
+Example log output:
+```
+HYDE generation failed (Timeout(15.0s)), falling back to original query
+Reranker failed (CUDA out of memory), falling back to score sorting
+```
+
+### MMR Behavior
+
+The Maximal Marginal Relevance (MMR) diversity step now respects the user's requested `top_k` from the request. The final result count is determined by `payload.top_k` rather than a fixed internal value, ensuring users get exactly the number of results they request.
+
 ---
 
 ## Performance Metrics
@@ -165,4 +204,25 @@ CACHE_TTL_RERANK = 3600       # 1 hour
 
 # HyDE (Hypothetical Document Embeddings)
 HYDE_ENABLED = true            # Generate synthetic doc for better retrieval
+
+---
+
+## Internal Components
+
+### LLM Client (NVIDIA NIM)
+
+The LLM client uses the NVIDIA NIM API to generate answers. The client returns a string response containing the generated answer text.
+
+**Note**: The `chat_completions` method has a return type of `str`, not `dict[str, Any]`. The client extracts the content from the response message directly.
+
+```python
+content = await client.chat_completions(
+    messages=[...],
+    temperature=0.1,
+    max_tokens=1024,
+)  # Returns: str (the generated answer content)
 ```
+
+### Cache Serialization
+
+The search cache now properly serializes `FilterExpression` objects when storing results. The filter is converted to a dictionary using `model_dump()` or fallback serialization before being used as a cache key.
