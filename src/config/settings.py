@@ -59,11 +59,32 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
     sparse_vocab_size: int = 50000  # Vocabulary size for TF-IDF sparse embeddings
     dense_model_name: str = "pritamdeka/S-PubMedBert-MS-MARCO"
-    reranker_model_name: str = "BAAI/bge-reranker-base"
+    reranker_model_name: str = "BAAI/bge-reranker-v2-m3"  # Upgraded from bge-reranker-base
     grobid_url: str = "http://localhost:8070"
-    
+
     # NLP model for entity extraction (scispacy)
     spacy_model: str = "en_core_sci_md"
+
+    # ===================== Embedding Provider =====================
+    # Options: "local", "huggingface", "cohere"
+    # - local:       SentenceTransformers on GPU/CPU (requires GPU for good perf)
+    # - huggingface: HF Inference API (free tier, same model as local)
+    # - cohere:      Cohere Embed API (free trial: 1k calls/mo)
+    embed_provider: str = "local"
+    hf_api_token: str = ""  # HuggingFace API token for Inference API
+    cohere_api_key: str = ""  # Cohere API key for embeddings/reranking
+    cohere_embed_model: str = "embed-english-v3.0"  # Cohere embed model name
+    hf_embed_model: str = "pritamdeka/S-PubMedBert-MS-MARCO"  # HF model for embeddings API
+
+    # ===================== Reranker Provider =====================
+    # Options: "local", "huggingface", "cohere"
+    # - local:       CrossEncoder on GPU/CPU (requires GPU for good perf)
+    # - huggingface: HF Inference API text-classification endpoint (free tier)
+    # - cohere:      Cohere Rerank API (free trial: 1k calls/mo, proper /rerank endpoint)
+    rerank_provider: str = "local"
+    hf_rerank_model: str = "BAAI/bge-reranker-v2-m3"  # HF model for reranking API
+    cohere_rerank_model: str = "rerank-english-v3.0"  # Cohere rerank model name
+    reranker_max_length: int = 1024  # Max sequence length for reranker (1024 for bge-m3)
 
     # ===================== Embedding Processing =====================
     embedding_batch_size: int = 32
@@ -80,6 +101,7 @@ class Settings(BaseSettings):
     reranker_top_n: int = 8
     reranker_batch_size: int = 16
     reranker_max_chars: int = 1200
+    reranker_max_length: int = 1024  # Max token length for reranker input (1024 for bge-m3)
 
     # ===================== Caching =====================
     cache_version: str = "v2"

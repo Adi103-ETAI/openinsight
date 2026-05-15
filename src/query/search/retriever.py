@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from src.config.settings import get_settings
-from src.ml.embedding.embedder import DualEmbedderV2
+from src.ml.embedding.embedder import BaseEmbedder, create_embedder, get_embedder
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector
 
@@ -27,12 +27,13 @@ class RetrievedChunk:
 
 
 class HybridRetriever:
-    def __init__(self):
+    def __init__(self, embedder: BaseEmbedder | None = None):
         settings = get_settings()
         self.settings = settings
         self.collection = settings.vector_collection_v2
         self.vector_store = get_vector_store()
-        self.embedder = DualEmbedderV2(settings.dense_model_name)
+        # Use config-driven embedder (local, huggingface, or cohere)
+        self.embedder = embedder or get_embedder()
 
     async def retrieve(
         self,

@@ -8,7 +8,7 @@ from typing import Any
 from src.ingestion.celery_app import celery_app
 from src.ml.chunking.chunker import HierarchicalChunkerV3
 from src.ingestion.dedupe import DocumentDeduplicator
-from src.ml.embedding.embedder import DualEmbedderV2
+from src.ml.embedding.embedder import create_embedder
 from src.ingestion.metadata import MetadataEnricherV2
 from src.data.mongo.doc_store import MongoDocStoreV2
 from src.ingestion.vector_indexer import VectorIndexer
@@ -33,7 +33,7 @@ class IngestionWorker:
         
         self.chunker = HierarchicalChunkerV3()
         self.metadata = MetadataEnricherV2()
-        self.embedder = DualEmbedderV2(self.settings.dense_model_name)
+        self.embedder = create_embedder()
         self.indexer = VectorIndexer()
         self.mongo = MongoDocStoreV2(
             mongo_url=self.settings.mongodb_url,

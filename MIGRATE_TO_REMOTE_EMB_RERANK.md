@@ -1,213 +1,154 @@
 # Migration: Offload embeddings & rerank to remote providers (Cohere / HF)
 
-Goal: Allow ingestion to run on GPU in Colab and use cloud vector DB (Zilliz/Milvus + MongoDB). Make query-serving optionally GPU-free by using remote embedding/rerank APIs while keeping NVIDIA NIM for LLM generation.
+Goal: Allow ingestion to run on GPU in Kaggle/Colab and use cloud vector DB (Zilliz/Milvus + MongoDB). Make query-serving GPU-free by using remote embedding/rerank APIs while keeping NVIDIA NIM for LLM generation.
 
 ---
 
-## Summary
+## Status: IMPLEMENTED ✅
 
-- Current: ingestion and query use local PyTorch models:
-  - Dense embeddings: `src/ml/embedding/embedder.py` (SentenceTransformers, CUDA if available)
-  - Reranker: `src/query/search/reranker.py` (transformers CrossEncoder, CUDA if available)
-  - HYDE + answer LLM: NVIDIA NIM (`src/services/llm_client.py`, used by `src/api/routes/search.py`)
-  - Vector DB: Milvus/Zilliz (`src/vectorstore/backends/milvus_store.py`, configured in `src/config/settings.py`)
-- Plan: produce embeddings in Colab (GPU), store vectors in Zilliz Cloud + metadata in MongoDB; make query-time embedding & rerank pluggable so server can call remote APIs (Cohere / HF) to avoid local GPUs.
+The pluggable provider architecture has been implemented. The following changes are now in the `restruct` branch:
+
+### Files Modified
+- `src/config/settings.py` — Added `embed_provider`, `rerank_provider`, `hf_api_token`, `cohere_api_key`, and model-specific settings
+- `src/ml/embedding/embedder.py` — Refactored to `BaseEmbedder` abstract class + `LocalEmbedder`, `HuggingFaceEmbedder`, `CohereEmbedder` + factory
+- `src/query/search/reranker.py` — Refactored to `BaseReranker` abstract class + `LocalReranker`, `HuggingFaceReranker`, `CohereReranker` + factory; upgraded default model to `BAAI/bge-reranker-v2-m3`
+- `src/query/search/retriever.py` — Now uses `get_embedder()` factory instead of hardcoded `DualEmbedderV2`
+- `src/api/routes/search.py` — Uses `get_reranker()` factory instead of hardcoded `CrossEncoderReranker`
+- `.env.example` — Added all new provider configuration variables
+
+### Files Added
+- `notebooks/kaggle_ingestion.py` — Self-contained Kaggle notebook for data ingestion
 
 ---
 
-## Architecture Diagrams
+## Architecture
 
-Current (simplified)
-
-```mermaid
-flowchart LR
-  A[Client UI] --> B[API Server]
-  B --> C[HybridRetriever]
-  C --> D[Milvus (local / cloud)]
-  C --> E[Local Embedder (SentenceTransformers)]
-  B --> F[Cross-Encoder Reranker (local)]
-  B --> G[NVIDIA NIM LLM]
-  D --> H[MongoDB metadata]
-```
-
-Proposed with remote providers
+### Ingestion (Kaggle/Colab with GPU)
 
 ```mermaid
 flowchart LR
   subgraph Ingestion
-    IColab[Colab (GPU)] -->|dense vectors| MilvusCloud[Zilliz/Milvus Cloud]
-    IColab -->|metadata| MongoDB
+    Kaggle[Kaggle T4/T4x2 GPU] -->|S-PubMedBert 768d| Zilliz[Zilliz Cloud]
+    Kaggle -->|TF-IDF sparse CPU| Zilliz
+    Kaggle -->|metadata| MongoDB[MongoDB Atlas]
+    Kaggle -->|checkpoints| KagglePersist[/kaggle/working 5GB]
   end
+```
 
-  subgraph Serving
-    Client --> APIServer[API Server]
-    APIServer --> Retriever[HybridRetriever]
-    Retriever -->|dense search| MilvusCloud
-    Retriever -->|sparse search| MilvusCloud
-    Retriever -->|maybe remote embed| RemoteEmbed[Remote Embed API (Cohere/HF)]
-    APIServer -->|optional remote| RemoteRerank[Remote Reranker API]
-    APIServer --> NIM[NVIDIA NIM (LLM)]
-    MilvusCloud --> MongoDB
+### Query Pipeline (CPU server + Free APIs)
+
+```mermaid
+flowchart LR
+  subgraph Query
+    Client --> API[API Server]
+    API --> Retriever[HybridRetriever]
+    Retriever -->|embed query| EmbedProvider[Embed Provider]
+    Retriever -->|dense+sparse search| Zilliz[Zilliz Cloud]
+    API -->|rerank| RerankProvider[Rerank Provider]
+    API -->|LLM gen| NIM[NVIDIA NIM]
+    Zilliz --> MongoDB[MongoDB Atlas]
   end
 ```
 
 ---
 
-## Migration Plan (phased)
+## Provider Configuration
 
-### Phase 0 — Prep & config
+### Embedding Providers
 
-- Add config keys in `src/config/settings.py`:
-  - `embed_provider: str` (options: `local`, `cohere`, `hf`)
-  - `embed_api_key`, `embed_api_url`, `rerank_provider`, `rerank_api_key`, timeouts, fallback modes.
-  - `milvus_cloud: bool` and `vector_token` already exist; set them for Zilliz Cloud.
-- Document Colab environment requirements (Python deps, `requirements.txt` entries: `sentence-transformers`, `pymilvus`, `pymongo`, `torch`).
+| Provider | `EMBED_PROVIDER` | Model | Dimension | Free Tier | Notes |
+|----------|-----------------|-------|-----------|-----------|-------|
+| Local | `local` | S-PubMedBert-MS-MARCO | 768 | N/A (GPU needed) | Best quality, requires GPU |
+| HuggingFace | `huggingface` | S-PubMedBert-MS-MARCO | 768 | 300 req/hr | Same model as ingestion, **recommended for consistency** |
+| Cohere | `cohere` | embed-english-v3.0 | 1024 | 1,000 calls/mo | Different vector space, DO NOT mix with S-PubMedBert |
 
-### Phase 1 — Ingestion (Colab)
+**⚠️ Critical**: If you used S-PubMedBert during ingestion (Kaggle), you MUST use the same model at query time. Use `EMBED_PROVIDER=huggingface` with `HF_EMBED_MODEL=pritamdeka/S-PubMedBert-MS-MARCO` for query-time to ensure embedding consistency. Using Cohere at query time with S-PubMedBert-indexed vectors will produce garbage results.
 
-- Run ingestion in Colab using existing ingestion tasks:
-  - Ensure `vector_uri` points to Zilliz Cloud and `vector_token` set.
-  - Set `milvus_cloud=True` to skip explicit `load_collection` calls.
-- Validate upserts by querying Milvus Cloud after ingestion (see tests below).
-- Save a snapshot of which embedding model + seed used (store model name in collection metadata / Mongo).
+### Reranking Providers
 
-### Phase 2 — Pluggable embedder + remote impl
-
-- Add an `Embedder` interface (module e.g., `src/ml/embedding/base.py`) and keep `DualEmbedderV2` as local impl.
-- Implement `RemoteEmbedder` (e.g., `src/ml/embedding/remote.py`) that:
-  - Calls Cohere / HF inference to get embeddings for queries.
-  - Has batching + retry + timeout + metric normalization (cosine norm if needed).
-- Wire `HybridRetriever` to use configured embedder (inject via settings or factory) instead of constructing `DualEmbedderV2` directly.
-
-### Phase 3 — Remote reranker (optional, recommended)
-
-- Implement `RemoteReranker` (`src/query/search/remote_reranker.py`) that accepts query+candidate texts and calls remote service:
-  - Cohere has rerank endpoints; HF Inference can host cross-encoders.
-  - Return scores and preserve `RetrievedChunk.score`.
-- Update `_get_or_create_component` in `src/api/routes/search.py` to instantiate `RemoteReranker` when configured.
-
-### Phase 4 — Fallbacks & caching
-
-- Keep local reranker/embedder as fallback when remote provider fails.
-- Use caching for embeddings/rerank outputs (settings: `cache_ttl_embedding`, `cache_ttl_rerank`) to reduce API calls and cost.
-- Add circuit-breaker logic and metrics.
-
-### Phase 5 — Testing & canary rollout
-
-- Run unit + integration tests (see test plan).
-- Canary using 5-10% traffic or separate staging instance with `embed_provider=cohere`.
-- Compare results (quality metrics below) vs local models.
-
-### Phase 6 — Full rollout & monitoring
-
-- Roll out, monitor latency, cost, correctness. Tune caching and batching.
+| Provider | `RERANK_PROVIDER` | Model | Free Tier | Notes |
+|----------|-------------------|-------|-----------|-------|
+| Local | `local` | bge-reranker-v2-m3 | N/A (GPU needed) | Upgraded from bge-reranker-base |
+| HuggingFace | `huggingface` | bge-reranker-v2-m3 | 300 req/hr | Uses text-classification endpoint |
+| Cohere | `cohere` | rerank-english-v3.0 | 1,000 calls/mo | Proper /rerank API, **recommended** |
 
 ---
 
-## Implementation pointers & code locations
+## Reranker Upgrade: bge-reranker-base → bge-reranker-v2-m3
 
-- Local embedder: `src/ml/embedding/embedder.py` — used by ingestion and `HybridRetriever`.
-- Local reranker: `src/query/search/reranker.py` — loaded in `src/api/routes/search.py`.
-- Where to change:
-  - `src/query/search/retriever.py`: replace `self.embedder = DualEmbedderV2(settings.dense_model_name)` with a factory: `get_embedder()` from new factory module.
-  - `src/api/routes/search.py`: in `_get_or_create_component`, return `RemoteReranker` when `settings.rerank_provider != 'local'`.
-  - Add new modules:
-    - `src/ml/embedding/base.py` (interface)
-    - `src/ml/embedding/remote.py` (Cohere/HF impl)
-    - `src/query/search/remote_reranker.py` (remote scoring)
-    - `src/utils/http_clients.py` (shared http client + retries/timeouts)
-- Example pseudocode for remote embed call (Cohere):
+| Factor | bge-reranker-base (old) | bge-reranker-v2-m3 (new) |
+|--------|------------------------|--------------------------|
+| Parameters | 278M | 568M |
+| Model size | ~1.1 GB | ~2.27 GB |
+| VRAM (FP16) | ~0.6 GB | ~1.5 GB |
+| Benchmark ΔHit@1 | +11.7pp | +14.7pp |
+| HF Free API fit | ✅ | ✅ (well within 10GB limit) |
+| CPU speed | Baseline | 40-60x faster than Gemma variant |
 
-```python
-# src/ml/embedding/remote.py (concept)
-import httpx
-class RemoteEmbedder:
-  def __init__(self, api_key, url="https://api.cohere.ai/embeddings"):
-    self.client = httpx.Client(timeout=10)
-    self.api_key = api_key
-  def embed_batch(self, texts, batch_size=32):
-    # batch, call API, parse vectors, normalize if needed
-    ...
+---
+
+## Quick Start
+
+### For Query Pipeline (CPU server with free APIs)
+
+```bash
+# .env configuration for free-tier query pipeline
+EMBED_PROVIDER=huggingface
+HF_API_TOKEN=hf_your_token_here
+HF_EMBED_MODEL=pritamdeka/S-PubMedBert-MS-MARCO
+
+RERANK_PROVIDER=cohere
+COHERE_API_KEY=your_cohere_key_here
+COHERE_RERANK_MODEL=rerank-english-v3.0
+
+# Zilliz Cloud (from ingestion)
+VECTOR_URI=https://your-cluster.api.gcp-us-west1.zillizcloud.com
+VECTOR_TOKEN=your_zilliz_api_key
+MILVUS_CLOUD=true
+
+# MongoDB Atlas (from ingestion)
+MONGODB_URL=mongodb+srv://user:pass@cluster.mongodb.net/openinsight
+
+# LLM (already cloud-based)
+NVIDIA_NIM_API_KEY=your_nim_key
+```
+
+### For Ingestion (Kaggle notebook)
+
+Use the notebook at `notebooks/kaggle_ingestion.py`. Key settings:
+```bash
+EMBED_PROVIDER=local  # Use Kaggle GPU
+RERANK_PROVIDER=local  # Use Kaggle GPU
+DENSE_MODEL_NAME=pritamdeka/S-PubMedBert-MS-MARCO
+RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3
 ```
 
 ---
 
 ## Testing & Validation Plan
 
-1. Unit tests
-   - Add unit tests for `RemoteEmbedder.embed_batch` and `RemoteReranker.rerank` using mocked HTTP responses.
-   - Existing tests in `tests/` should continue to pass.
+1. **Unit tests** — Add tests for `HuggingFaceEmbedder`, `CohereEmbedder`, `HuggingFaceReranker`, `CohereReranker` with mocked HTTP responses.
 
-2. Integration tests (staging)
-   - Ingest a representative dataset in Colab (small sample).
-   - Query sample queries and compare:
-     - Top-k overlap between local and remote rerank (e.g., top-10 intersection)
-     - Embedding cosine similarity distribution for same-document pairs.
-   - Commands/examples:
+2. **Integration tests** — Ingest a small sample in Kaggle, then query from CPU server with remote providers.
 
-```bash
-# run API server in staging env:
-export VECTOR_URI="https://<zilliz-cloud-endpoint>"
-export VECTOR_TOKEN="<token>"
-export MILVUS_CLOUD="true"
-export EMBED_PROVIDER="cohere"
-export EMBED_API_KEY="<key>"
-# start uvicorn / docker-compose as usual
-```
+3. **Quality metrics** — Compare retrieval quality between local and remote providers using labeled queries.
 
-3. Performance & latency
-   - Measure p50/p95/p99 for:
-     - embedding call (remote vs local)
-     - rerank call (remote vs local)
-     - full search request (end-to-end)
-   - Acceptable thresholds:
-     - P50 < 200–400ms for embed + rerank (depends on provider)
-     - If >1s, consider caching or partial local fallback.
-
-4. Quality metrics
-   - Use relevance annotations (small labeled set) to compute:
-     - NDCG@k, Precision@k, MRR for local vs remote.
-   - If drop in quality > X% (define X, e.g., 5–10%), investigate model mismatch.
-
-5. Consistency checks
-   - Ensure the embedding model used in Colab for ingestion == the runtime embedding provider model or is well-matched.
-   - If different, validate nearest-neighbor recall loss: measure recall@k for known positives.
-
-6. Canary rollout
-   - Start with a small percentage of traffic or a staging endpoint where `embed_provider=cohere`.
-   - Monitor:
-     - Error rates, latency, cost per request, quality metrics.
-   - If regressions appear, roll back to local.
-
-7. Monitoring & alerts
-   - Instrument:
-     - Count of remote API calls, failures, latencies.
-     - Cache hit rate.
-     - Cost estimate per day/week.
-   - Alert on >5% remote-call error rate or >30% increase in average latency.
-
----
-
-## Verification checklist (quick)
-- [ ] Ingestion in Colab successfully upserts vectors to Milvus Cloud.
-- [ ] Queries return results and answer generation still calls NVIDIA NIM.
-- [ ] Remote embed + rerank endpoints respond within SLA.
-- [ ] Unit + integration tests pass.
-- [ ] Quality metrics acceptable vs baseline.
+4. **Consistency checks** — Ensure embedding model used during ingestion matches query-time model.
 
 ---
 
 ## Risks & Tradeoffs
-- Latency increase due to network calls to embedding/rerank APIs.
-- Cost (per-embedding / per-rerank) can be significant — use batching/caching.
-- Model mismatch between ingestion embeddings and query-time embeddings reduces retrieval recall.
-- Reranker differences can change ranking behavior; test carefully.
+
+- **Latency**: Remote API calls add network latency (50-200ms per call)
+- **Rate limits**: HF free tier = 300 req/hr; Cohere = 1,000 calls/mo
+- **Embedding consistency**: Using different models at ingestion vs query time degrades retrieval quality
+- **Availability**: Free tier APIs may have downtime or throttling
 
 ---
 
-## Quick next steps
-- (A) Draft precise code patches to add a `RemoteEmbedder` and `RemoteReranker` and wire config.
-- (B) Produce a small Colab notebook snippet (requirements + minimal ingestion snippet) to run embeddings and upsert to Zilliz Cloud.
-- (C) Provide test scripts to compare local vs remote results automatically.
+## Backward Compatibility
 
-Pick one and I will implement it.
+- `DualEmbedderV2` is now an alias for `LocalEmbedder`
+- `CrossEncoderReranker` is now an alias for `LocalReranker`
+- Default behavior (`EMBED_PROVIDER=local`, `RERANK_PROVIDER=local`) is unchanged
+- All existing code using `DualEmbedderV2` or `CrossEncoderReranker` continues to work

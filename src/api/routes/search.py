@@ -15,7 +15,7 @@ from src.query.search.context_builder import assemble_context, build_citation_li
 from src.query.search.fusion import reciprocal_rank_fusion
 from src.query.search.mmr import maximal_marginal_relevance
 from src.query.search.query_understanding import QueryUnderstanding
-from src.query.search.reranker import CrossEncoderReranker
+from src.query.search.reranker import BaseReranker, get_reranker
 from src.query.search.retriever import HybridRetriever
 import re
 
@@ -118,7 +118,7 @@ async def _get_or_create_component(request: Request, name: str) -> Any:
         elif name == "retriever":
             component = HybridRetriever()
         elif name == "reranker":
-            component = CrossEncoderReranker()
+            component = get_reranker()
         elif name == "cache":
             component = SearchCache()
         else:
@@ -181,7 +181,7 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         request, "query_understanding"
     )
     retriever: HybridRetriever = await _get_or_create_component(request, "retriever")
-    reranker: CrossEncoderReranker = await _get_or_create_component(request, "reranker")
+    reranker: BaseReranker = await _get_or_create_component(request, "reranker")
     cache: SearchCache = await _get_or_create_component(request, "cache")
 
     analysis = query_understanding.analyze(query)

@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name
         app.state.search_components = {
             "query_understanding": QueryUnderstanding(),
             "retriever": HybridRetriever(),
-            "reranker": CrossEncoderReranker(),
+            "reranker": get_reranker(),
             "cache": SearchCache(),
         }
         logger.info("Search v2 singletons initialized")
@@ -139,7 +139,7 @@ from src.api.routes import search as search_router
 from src.api.routes import deep_insights as deep_insights_router
 from src.query.search.cache import SearchCache
 from src.query.search.query_understanding import QueryUnderstanding
-from src.query.search.reranker import CrossEncoderReranker
+from src.query.search.reranker import get_reranker
 from src.query.search.retriever import HybridRetriever
 
 
