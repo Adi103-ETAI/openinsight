@@ -16,7 +16,6 @@ SOURCES = [
     "who",
     "cdc",
     "statpearls",
-    "medquad",
 ]
 
 
