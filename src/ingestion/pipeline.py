@@ -671,16 +671,6 @@ class IngestionPipeline:
         suffix = file_path.suffix.lower()
 
         if suffix == ".xml":
-            # Route to the correct XML parser based on source type
-            if source == "medquad":
-                from src.ingestion.parsers.medquad import MedQuADParser
-                try:
-                    docs = MedQuADParser(file_path).parse()
-                    if docs:
-                        return docs
-                except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                    logger.warning("[pipeline] MedQuAD parser failed for %s: %s", file_path.name, exc)
-                return []
             return self._parse_pubmed_xml_file(file_path)
 
         if suffix != ".pdf":
