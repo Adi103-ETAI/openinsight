@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import logging
 import xml.etree.ElementTree as ET
+
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -501,6 +503,30 @@ class IngestionPipeline:
                     )
                 continue  # Skip this batch
 
+            # Validate embeddings: detect if API returned all-zero vectors
+            zero_count = int(np.all(dense_embeddings == 0, axis=1).sum())
+            if zero_count == len(dense_embeddings):
+                logger.error(
+                    "[pipeline] All %d embeddings are zero vectors — API likely failed. "
+                    "Storing to dead letter. If using HuggingFace provider, switch to "
+                    "EMBED_PROVIDER=local for GPU ingestion.",
+                    len(dense_embeddings),
+                )
+                for entry in docs_for_batch:
+                    await self._store_to_dead_letter(
+                        Path(entry["doc"].get("url", "/")),
+                        ERROR_TYPE_EMBED,
+                        "All embeddings are zero vectors (API failure suspected)",
+                        retry_count=max_embed_retries,
+                    )
+                continue
+            elif zero_count > 0:
+                logger.warning(
+                    "[pipeline] %d/%d embeddings are zero vectors — partial API failure",
+                    zero_count,
+                    len(dense_embeddings),
+                )
+
             sparse_vectors = [
                 self.embedder.compute_sparse_vector(text) for text in contextual_texts
             ]
@@ -692,92 +718,220 @@ class IngestionPipeline:
             return []
 
         root = tree.getroot()
+
+        # Collect regular PubMed articles
         articles = root.findall(".//PubmedArticle")
         if not articles and root.tag.endswith("PubmedArticle"):
             articles = [root]
 
+        # Also collect book articles (StatPearls use PubmedBookArticle format)
+        book_articles = root.findall(".//PubmedBookArticle")
+
         docs: list[dict[str, Any]] = []
+
+        # Parse regular PubMed articles
         for article in articles:
-            citation = article.find("MedlineCitation")
-            if citation is None:
-                continue
-            article_data = citation.find("Article")
-            if article_data is None:
-                continue
+            doc = self._parse_pubmed_article(article, file_path)
+            if doc:
+                docs.append(doc)
 
-            title = (article_data.findtext("ArticleTitle") or "").strip()
-            abstract_nodes = article_data.findall(".//AbstractText")
-            abstract = " ".join(
-                (node.text or "").strip()
-                for node in abstract_nodes
-                if (node.text or "").strip()
-            )
-            if not title and not abstract:
-                continue
-
-            pmid = (citation.findtext("PMID") or "").strip()
-            year_text = (
-                article_data.findtext(".//Journal/JournalIssue/PubDate/Year") or ""
-            ).strip()
-            year = int(year_text) if year_text.isdigit() else 0
-            journal = (
-                article_data.findtext(".//Journal/Title")
-                or article_data.findtext(".//Journal/ISOAbbreviation")
-                or ""
-            ).strip()
-
-            doi = None
-            for id_node in article.findall(".//ArticleId"):
-                if id_node.attrib.get("IdType") == "doi":
-                    doi = (id_node.text or "").strip() or None
-                    break
-
-            mesh_terms = [
-                (n.text or "").strip()
-                for n in citation.findall(".//MeshHeading/DescriptorName")
-                if (n.text or "").strip()
-            ]
-            keywords = [
-                (n.text or "").strip()
-                for n in citation.findall(".//Keyword")
-                if (n.text or "").strip()
-            ]
-
-            authors: list[str] = []
-            for author in article_data.findall(".//Author"):
-                last = (author.findtext("LastName") or "").strip()
-                fore = (author.findtext("ForeName") or "").strip()
-                full_name = f"{last} {fore}".strip()
-                if full_name:
-                    authors.append(full_name)
-
-            content = f"{title}\n\n{abstract}".strip()
-            doc_id = (
-                f"pmid_{pmid}"
-                if pmid
-                else self._hash_doc_id(str(file_path), title, abstract)
-            )
-
-            docs.append(
-                {
-                    "doc_id": doc_id,
-                    "title": title,
-                    "abstract": abstract,
-                    "content": content,
-                    "authors": authors,
-                    "year": year,
-                    "journal": journal,
-                    "doi": doi,
-                    "pmid": pmid or None,
-                    "mesh_terms": mesh_terms,
-                    "keywords": keywords,
-                    "sections": [],
-                    "url": str(file_path.resolve()),
-                    "source_type": "pubmed",
-                }
-            )
+        # Parse book articles (StatPearls, books, etc.)
+        for book_article in book_articles:
+            doc = self._parse_pubmed_book_article(book_article, file_path)
+            if doc:
+                docs.append(doc)
 
         return docs
+
+    def _parse_pubmed_article(
+        self, article: ET.Element, file_path: Path
+    ) -> dict[str, Any] | None:
+        """Parse a standard PubmedArticle XML element."""
+        citation = article.find("MedlineCitation")
+        if citation is None:
+            return None
+        article_data = citation.find("Article")
+        if article_data is None:
+            return None
+
+        title = (article_data.findtext("ArticleTitle") or "").strip()
+        abstract_nodes = article_data.findall(".//AbstractText")
+        abstract = " ".join(
+            (node.text or "").strip()
+            for node in abstract_nodes
+            if (node.text or "").strip()
+        )
+        if not title and not abstract:
+            return None
+
+        pmid = (citation.findtext("PMID") or "").strip()
+        year_text = (
+            article_data.findtext(".//Journal/JournalIssue/PubDate/Year") or ""
+        ).strip()
+        year = int(year_text) if year_text.isdigit() else 0
+        journal = (
+            article_data.findtext(".//Journal/Title")
+            or article_data.findtext(".//Journal/ISOAbbreviation")
+            or ""
+        ).strip()
+
+        doi = None
+        for id_node in article.findall(".//ArticleId"):
+            if id_node.attrib.get("IdType") == "doi":
+                doi = (id_node.text or "").strip() or None
+                break
+
+        mesh_terms = [
+            (n.text or "").strip()
+            for n in citation.findall(".//MeshHeading/DescriptorName")
+            if (n.text or "").strip()
+        ]
+        keywords = [
+            (n.text or "").strip()
+            for n in citation.findall(".//Keyword")
+            if (n.text or "").strip()
+        ]
+
+        authors: list[str] = []
+        for author in article_data.findall(".//Author"):
+            last = (author.findtext("LastName") or "").strip()
+            fore = (author.findtext("ForeName") or "").strip()
+            full_name = f"{last} {fore}".strip()
+            if full_name:
+                authors.append(full_name)
+
+        content = f"{title}\n\n{abstract}".strip()
+        doc_id = (
+            f"pmid_{pmid}"
+            if pmid
+            else self._hash_doc_id(str(file_path), title, abstract)
+        )
+
+        return {
+            "doc_id": doc_id,
+            "title": title,
+            "abstract": abstract,
+            "content": content,
+            "authors": authors,
+            "year": year,
+            "journal": journal,
+            "doi": doi,
+            "pmid": pmid or None,
+            "mesh_terms": mesh_terms,
+            "keywords": keywords,
+            "sections": [],
+            "url": str(file_path.resolve()),
+            "source_type": "pubmed",
+        }
+
+    def _parse_pubmed_book_article(
+        self, book_article: ET.Element, file_path: Path
+    ) -> dict[str, Any] | None:
+        """Parse a PubmedBookArticle XML element (StatPearls, books, etc.)."""
+        book_document = book_article.find("BookDocument")
+        if book_document is None:
+            return None
+
+        # Title from ArticleTitle
+        title = (book_document.findtext("ArticleTitle") or "").strip()
+
+        # Abstract from Abstract/AbstractText
+        abstract_nodes = book_document.findall(".//AbstractText")
+        abstract = " ".join(
+            (node.text or "").strip()
+            for node in abstract_nodes
+            if (node.text or "").strip()
+        )
+
+        if not title and not abstract:
+            return None
+
+        # PMID from BookDocument/PMID
+        pmid = (book_document.findtext("PMID") or "").strip()
+
+        # Book info
+        book = book_document.find("Book")
+        journal = ""
+        year = 0
+        if book is not None:
+            book_title = (book.findtext("BookTitle") or "").strip()
+            if book_title:
+                journal = book_title
+            pub_date = book.find("PubDate")
+            if pub_date is not None:
+                year_text = (pub_date.findtext("Year") or "").strip()
+                year = int(year_text) if year_text.isdigit() else 0
+
+        # DOI
+        doi = None
+        for id_node in book_document.findall(".//ArticleId"):
+            if id_node.attrib.get("IdType") == "doi":
+                doi = (id_node.text or "").strip() or None
+                break
+            elif id_node.attrib.get("IdType") == "bookaccession":
+                # Use book accession as fallback identifier
+                if not doi:
+                    doi = (id_node.text or "").strip() or None
+
+        # MeSH terms from BookDocument
+        mesh_terms = [
+            (n.text or "").strip()
+            for n in book_document.findall(".//MeshHeading/DescriptorName")
+            if (n.text or "").strip()
+        ]
+
+        # Keywords
+        keywords = [
+            (n.text or "").strip()
+            for n in book_document.findall(".//Keyword")
+            if (n.text or "").strip()
+        ]
+
+        # Authors
+        authors: list[str] = []
+        for author in book_document.findall(".//Author"):
+            last = (author.findtext("LastName") or "").strip()
+            fore = (author.findtext("ForeName") or "").strip()
+            full_name = f"{last} {fore}".strip()
+            if full_name:
+                authors.append(full_name)
+
+        # Sections from BookDocument/Sections
+        sections: list[dict[str, str]] = []
+        for section in book_document.findall(".//Section"):
+            section_title = (section.findtext("SectionTitle") or "").strip()
+            section_content_nodes = section.findall(".//AbstractText")
+            section_content = " ".join(
+                (n.text or "").strip()
+                for n in section_content_nodes
+                if (n.text or "").strip()
+            )
+            if section_title or section_content:
+                sections.append({"title": section_title, "content": section_content})
+
+        content = f"{title}\n\n{abstract}".strip()
+        doc_id = (
+            f"pmid_{pmid}"
+            if pmid
+            else self._hash_doc_id(str(file_path), title, abstract)
+        )
+
+        return {
+            "doc_id": doc_id,
+            "title": title,
+            "abstract": abstract,
+            "content": content,
+            "authors": authors,
+            "year": year,
+            "journal": journal,
+            "doi": doi,
+            "pmid": pmid or None,
+            "mesh_terms": mesh_terms,
+            "keywords": keywords,
+            "sections": sections,
+            "url": str(file_path.resolve()),
+            "source_type": "pubmed",
+        }
 
     def _normalize_document(self, doc: Any, source: str) -> dict[str, Any]:
         if isinstance(doc, dict):

@@ -240,8 +240,13 @@ class HuggingFaceEmbedder(BaseEmbedder):
         return embedding
 
     def embed_batch(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
-        """Embed texts one by one via HF API (no batch endpoint on free tier)."""
+        """Embed texts one by one via HF API (no batch endpoint on free tier).
+        
+        Raises RuntimeError if ALL embeddings fail, so the pipeline can retry
+        instead of silently indexing zero vectors.
+        """
         embeddings = []
+        failed_count = 0
         for i, text in enumerate(texts):
             try:
                 emb = self.embed_query(text)
@@ -249,11 +254,28 @@ class HuggingFaceEmbedder(BaseEmbedder):
             except Exception as e:
                 logger.warning(f"[HFEmbedder] Failed to embed text {i}: {e}")
                 embeddings.append(np.zeros(self._dim, dtype=np.float32))
+                failed_count += 1
 
             # Respect rate limits: small delay between requests
             if (i + 1) % 10 == 0:
                 import time
                 time.sleep(1.0)
+
+        # If ALL embeddings failed, raise an error so the pipeline can retry
+        # instead of silently indexing useless zero vectors
+        if failed_count == len(texts) and len(texts) > 0:
+            raise RuntimeError(
+                f"[HFEmbedder] All {len(texts)} embeddings failed. "
+                f"Check that the model '{self._model_name}' has a deployed "
+                f"Inference API endpoint on HuggingFace. "
+                f"For GPU ingestion (Kaggle/Colab), use EMBED_PROVIDER=local instead."
+            )
+
+        if failed_count > 0:
+            logger.warning(
+                f"[HFEmbedder] {failed_count}/{len(texts)} embeddings failed, "
+                f"using zero vectors as fallback"
+            )
 
         return np.array(embeddings, dtype=np.float32)
 
