@@ -5,6 +5,7 @@ Extracts: title, abstract, sections, full text with section labels.
 Falls back to pdfplumber if GROBID is unavailable.
 """
 
+import time
 import requests
 from pathlib import Path
 from loguru import logger
@@ -27,41 +28,142 @@ class GROBIDParser(BaseParser):
         self.file_path = Path(file_path)
         self._source_type = source_type
 
+        # Get settings for configurable timeouts and retries
+        from src.config.settings import get_settings
+        self._settings = get_settings()
+
     @property
     def source_type(self) -> str:
         return self._source_type
 
-    def _call_grobid(self) -> Optional[str]:
-        """Send PDF to GROBID and return TEI XML response."""
-        # Get settings lazily inside method to avoid import-time failures
+    @property
+    def grobid_url(self) -> str:
+        """Get GROBID URL from settings."""
+        return self._settings.grobid_url
+
+    @property
+    def timeout(self) -> int:
+        """Get configurable timeout from settings, default to 120s."""
+        return getattr(self._settings, 'grobid_timeout', 120)
+
+    @property
+    def max_retries(self) -> int:
+        """Get max retries from settings, default to 3."""
+        return getattr(self._settings, 'grobid_max_retries', 3)
+
+    @property
+    def retry_delay(self) -> float:
+        """Get retry delay from settings, default to 2.0s."""
+        return getattr(self._settings, 'grobid_retry_delay', 2.0)
+
+    @property
+    def health_check_timeout(self) -> int:
+        """Get health check timeout from settings, default to 10s."""
+        return getattr(self._settings, 'grobid_health_check_timeout', 10)
+
+    @classmethod
+    def check_health(cls, grobid_url: str = None, timeout: int = 10) -> bool:
+        """
+        Check if GROBID service is running and healthy.
+
+        Args:
+            grobid_url: Base URL of GROBID service (defaults to settings)
+            timeout: Timeout for health check request
+
+        Returns:
+            bool: True if GROBID is healthy, False otherwise
+        """
         from src.config.settings import get_settings
         settings = get_settings()
+        url = grobid_url or settings.grobid_url
+        health_timeout = getattr(settings, 'grobid_health_check_timeout', timeout)
 
-        url = f"{settings.grobid_url}/api/processFulltextDocument"
         try:
-            with open(self.file_path, "rb") as f:
-                response = requests.post(
-                    url,
-                    files={"input": f},
-                    data={"consolidateHeader": "1", "consolidateCitations": "0"},
-                    timeout=120,
-                )
+            # GROBID 0.9.0+ has /api/health endpoint, older versions use /api/isalive
+            response = requests.get(
+                f"{url}/api/health",
+                timeout=health_timeout
+            )
             if response.status_code == 200:
-                return response.text
-            else:
+                logger.info(f"GROBID health check passed at {url}")
+                return True
+        except requests.RequestException:
+            pass
+
+        # Fallback to older isalive endpoint for GROBID < 0.9.0
+        try:
+            response = requests.get(
+                f"{url}/api/isalive",
+                timeout=health_timeout
+            )
+            if response.status_code == 200:
+                logger.info(f"GROBID health check passed (isalive) at {url}")
+                return True
+        except requests.RequestException as e:
+            logger.warning(f"GROBID health check failed: {e}")
+
+        return False
+
+    def _call_grobid(self) -> Optional[str]:
+        """Send PDF to GROBID and return TEI XML response with retry logic."""
+        url = f"{self.grobid_url}/api/processFulltextDocument"
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                with open(self.file_path, "rb") as f:
+                    response = requests.post(
+                        url,
+                        files={"input": f},
+                        data={"consolidateHeader": "1", "consolidateCitations": "0"},
+                        timeout=self.timeout,
+                    )
+
+                if response.status_code == 200:
+                    return response.text
+                elif response.status_code == 503:
+                    # Service temporarily unavailable - retry
+                    last_error = f"GROBID service unavailable (503)"
+                    logger.warning(
+                        f"GROBID service unavailable (attempt {attempt + 1}/{self.max_retries})"
+                    )
+                else:
+                    last_error = f"GROBID returned {response.status_code}"
+                    logger.warning(
+                        f"{last_error} for {self.file_path.name}"
+                    )
+                    # Don't retry for non-retryable errors
+                    if response.status_code >= 400 and response.status_code < 500:
+                        return None
+
+            except requests.Timeout:
+                last_error = f"Timeout after {self.timeout}s"
                 logger.warning(
-                    f"GROBID returned {response.status_code} for {self.file_path.name}"
+                    f"GROBID request timed out (attempt {attempt + 1}/{self.max_retries})"
                 )
-                return None
-        except (
-            requests.RequestException,
-            RuntimeError,
-            ValueError,
-            TypeError,
-            OSError,
-        ) as e:
-            logger.warning(f"GROBID call failed for {self.file_path.name}: {e}")
-            return None
+            except (
+                requests.RequestException,
+                RuntimeError,
+                ValueError,
+                TypeError,
+                OSError,
+            ) as e:
+                last_error = str(e)
+                logger.warning(f"GROBID call failed for {self.file_path.name}: {e}")
+
+            # Wait before retry with exponential backoff
+            if attempt < self.max_retries - 1:
+                delay = min(
+                    self.retry_delay * (2 ** attempt),
+                    getattr(self._settings, 'retry_max_delay', 60.0)
+                )
+                logger.info(f"Retrying GROBID in {delay:.1f}s...")
+                time.sleep(delay)
+
+        logger.error(
+            f"GROBID failed after {self.max_retries} attempts for {self.file_path.name}: {last_error}"
+        )
+        return None
 
     def _parse_tei(self, tei_xml: str) -> dict:
         """Parse TEI XML from GROBID into structured dict."""

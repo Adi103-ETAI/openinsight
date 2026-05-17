@@ -154,8 +154,31 @@ class IngestionPipeline:
         """
         suffix = file_path.suffix.lower()
 
-        # XML files: use primary parser directly without OCR fallback
+        # XML files: use primary parser with validation
         if suffix == ".xml":
+            # First, validate the XML is well-formed before trying to parse
+            try:
+                import xml.etree.ElementTree as ET
+                ET.parse(file_path)
+            except ET.ParseError as e:
+                logger.warning("[pipeline] Invalid XML file %s: %s", file_path.name, e)
+                await self._store_to_dead_letter(
+                    file_path,
+                    ERROR_TYPE_PARSE,
+                    f"Invalid XML: {str(e)[:200]}",
+                    max_retries,
+                )
+                return []
+            except Exception as e:
+                logger.warning("[pipeline] XML validation failed %s: %s", file_path.name, e)
+                await self._store_to_dead_letter(
+                    file_path,
+                    ERROR_TYPE_PARSE,
+                    f"XML validation failed: {str(e)[:200]}",
+                    max_retries,
+                )
+                return []
+
             result = await self._try_primary_parser(file_path, source)
             if result:
                 return result
@@ -163,14 +186,36 @@ class IngestionPipeline:
             await self._store_to_dead_letter(
                 file_path,
                 ERROR_TYPE_PARSE,
-                "XML parsing failed",
+                "XML parsing returned no content",
                 max_retries,
             )
             return []
 
-        # PDF files: try primary parser, then OCR fallback
+        # PDF files: check if scanned first to avoid wasting time on primary parser
         if suffix == ".pdf":
-            # Try primary parser first
+            # Quick check: is it a scanned PDF? Skip primary parser if yes
+            is_scanned = OCRParser.is_scanned(file_path) if file_path.exists() else False
+
+            if is_scanned:
+                # Skip primary parser - go directly to OCR for scanned PDFs
+                logger.info(
+                    "[pipeline] Detected scanned PDF, using OCR directly: %s",
+                    file_path.name,
+                )
+                ocr_result = await self._try_ocr_parser(file_path, source)
+                if ocr_result:
+                    logger.info("[pipeline] OCR succeeded for scanned PDF: %s", file_path.name)
+                    return ocr_result
+                # OCR failed - store to dead letter
+                await self._store_to_dead_letter(
+                    file_path,
+                    ERROR_TYPE_OCR,
+                    "Scanned PDF - OCR fallback failed",
+                    max_retries,
+                )
+                return []
+
+            # Not scanned - try primary parser first
             primary_result = await self._try_primary_parser(file_path, source)
 
             if primary_result:
@@ -218,13 +263,8 @@ class IngestionPipeline:
     async def _try_ocr_parser(self, file_path: Path, source: str) -> list[Any]:
         """Try OCR parser as fallback for scanned PDFs."""
         try:
-            # Check if it's a scanned PDF
-            if not OCRParser.is_scanned(file_path):
-                logger.debug(
-                    "[pipeline] PDF not detected as scanned: %s", file_path.name
-                )
-                return None
-
+            # Note: is_scanned check is now done BEFORE calling this method
+            # in _parse_with_ocr_fallback to avoid wasting time on non-scanned PDFs
             docs = OCRParser(file_path, source_type=source).parse()
             if docs:
                 return docs
@@ -466,16 +506,18 @@ class IngestionPipeline:
                 continue
 
             contextual_texts = [c.contextual_text for c in chunks_for_batch]
+            total_input_chunks = len(contextual_texts)
 
             # Retry logic from v3 with dead letter queue for failures
             dense_embeddings = None
+            embed_failed_indices = []
             embed_error = None
             max_embed_retries = 2
 
             for attempt in range(max_embed_retries):
                 try:
                     batch_size = 32 if attempt == 0 else 16
-                    dense_embeddings = await self._run_cpu(
+                    dense_embeddings, embed_failed_indices = await self._run_cpu(
                         self.embedder.embed_batch,
                         contextual_texts,
                         batch_size,
@@ -483,6 +525,7 @@ class IngestionPipeline:
                     break
                 except Exception as e:
                     embed_error = e
+                    embed_failed_indices = list(range(len(contextual_texts)))
                     logger.warning(
                         f"[pipeline] Embedding attempt {attempt + 1} failed: {e}"
                     )
@@ -503,37 +546,55 @@ class IngestionPipeline:
                     )
                 continue  # Skip this batch
 
-            # Validate embeddings: detect if API returned all-zero vectors
-            zero_count = int(np.all(dense_embeddings == 0, axis=1).sum())
-            if zero_count == len(dense_embeddings):
-                logger.error(
-                    "[pipeline] All %d embeddings are zero vectors — API likely failed. "
-                    "Storing to dead letter. If using HuggingFace provider, switch to "
-                    "EMBED_PROVIDER=local for GPU ingestion.",
-                    len(dense_embeddings),
-                )
-                for entry in docs_for_batch:
-                    await self._store_to_dead_letter(
-                        Path(entry["doc"].get("url", "/")),
-                        ERROR_TYPE_EMBED,
-                        "All embeddings are zero vectors (API failure suspected)",
-                        retry_count=max_embed_retries,
-                    )
-                continue
-            elif zero_count > 0:
+            # Filter out chunks with failed embeddings - only index valid ones
+            valid_indices = [i for i in range(len(dense_embeddings)) if i not in embed_failed_indices]
+            failed_count = len(embed_failed_indices)
+
+            if failed_count > 0:
                 logger.warning(
-                    "[pipeline] %d/%d embeddings are zero vectors — partial API failure",
-                    zero_count,
-                    len(dense_embeddings),
+                    "[pipeline] %d/%d embeddings failed - filtering out invalid chunks before indexing",
+                    failed_count,
+                    total_input_chunks,
+                )
+
+                # Create filtered lists - only include valid embeddings
+                valid_chunks = [chunks_for_batch[i] for i in valid_indices]
+                valid_dense_embeddings = dense_embeddings[valid_indices]
+                valid_contextual_texts = [contextual_texts[i] for i in valid_indices]
+
+                if not valid_chunks:
+                    logger.error(
+                        "[pipeline] All %d embeddings failed - cannot index any chunks",
+                        failed_count,
+                    )
+                    # Store failed docs to dead letter
+                    for entry in docs_for_batch:
+                        await self._store_to_dead_letter(
+                            Path(entry["doc"].get("url", "/")),
+                            ERROR_TYPE_EMBED,
+                            f"All {failed_count} embeddings failed",
+                            retry_count=max_embed_retries,
+                        )
+                    continue
+
+                # Update references for indexing
+                chunks_for_batch = valid_chunks
+                dense_embeddings = valid_dense_embeddings
+                contextual_texts = valid_contextual_texts
+                logger.info(
+                    "[pipeline] Proceeding with %d valid embeddings (filtered out %d failed)",
+                    len(valid_chunks),
+                    failed_count,
                 )
 
             sparse_vectors = [
                 self.embedder.compute_sparse_vector(text) for text in contextual_texts
             ]
 
-            # Vector indexing with error handling
+            # Vector indexing with verification
             indexed = 0
             index_error = None
+            expected_count = len(chunks_for_batch)
             try:
                 indexed = self.indexer.upsert_chunks(
                     chunks=chunks_for_batch,
@@ -554,6 +615,22 @@ class IngestionPipeline:
                         retry_count=1,
                     )
                 continue  # Skip this batch
+
+            # Verify that Zilliz upsert succeeded - logged count should match expected
+            if indexed != expected_count:
+                logger.error(
+                    "[pipeline] ZILLIZ UPSERT MISMATCH: expected %d, got %d - "
+                    "data integrity issue detected!",
+                    expected_count,
+                    indexed,
+                )
+                # This is a critical data integrity issue - log but don't fail
+                # as indexed > 0 means some data was stored
+            elif indexed > 0:
+                logger.info(
+                    "[pipeline] Zilliz upsert verified: %d vectors successfully indexed",
+                    indexed,
+                )
 
             for entry in docs_for_batch:
                 await self.mongo.store_document(entry["doc"], entry["enriched"])
@@ -995,3 +1072,119 @@ class IngestionPipeline:
     async def _run_cpu(self, func, *args):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: func(*args))
+
+    async def reprocess_dead_letter(
+        self,
+        error_type: str | None = None,
+        max_retry_count: int = 2,
+        source: str | None = None,
+    ) -> dict[str, int]:
+        """
+        Reprocess failed documents from the dead letter queue.
+
+        Args:
+            error_type: Filter by specific error type (parse_error, embed_error,
+                       index_error, ocr_error). If None, reprocess all.
+            max_retry_count: Only reprocess documents with retry_count < this value
+            source: Filter by source (e.g., 'pubmed', 'icmr'). If None, reprocess all
+
+        Returns:
+            Summary dict with counts of reprocessed, succeeded, and failed documents
+        """
+        if not self._dead_letter_enabled:
+            logger.warning("[pipeline] Dead letter queue is disabled")
+            return {"total": 0, "reprocessed": 0, "succeeded": 0, "failed": 0}
+
+        # Build query filter
+        query: dict[str, Any] = {"retry_count": {"$lt": max_retry_count}}
+        if error_type:
+            query["error_type"] = error_type
+        if source:
+            query["source"] = source
+
+        # Find failed documents
+        failed_docs = list(self._dead_letter_db.find(query))
+        if not failed_docs:
+            logger.info("[pipeline] No documents found in dead letter queue matching criteria")
+            return {"total": 0, "reprocessed": 0, "succeeded": 0, "failed": 0}
+
+        logger.info(
+            "[pipeline] Found %d failed documents in dead letter queue (error_type=%s, source=%s)",
+            len(failed_docs),
+            error_type or "all",
+            source or "all",
+        )
+
+        summary = {
+            "total": len(failed_docs),
+            "reprocessed": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+
+        for doc in failed_docs:
+            file_path = Path(doc.get("file_path", ""))
+            error_type_val = doc.get("error_type", "unknown")
+            doc_source = doc.get("source", "pubmed")  # default to pubmed
+
+            if not file_path.exists():
+                logger.warning(
+                    "[pipeline] File no longer exists, removing from dead letter: %s",
+                    file_path,
+                )
+                await self._dead_letter_db.delete_one({"_id": doc["_id"]})
+                summary["failed"] += 1
+                continue
+
+            # Determine source from file if not in doc
+            if not doc_source:
+                # Infer source from path
+                path_lower = str(file_path).lower()
+                if "icmr" in path_lower:
+                    doc_source = "icmr"
+                elif "pubmed" in path_lower:
+                    doc_source = "pubmed"
+                elif "cochrane" in path_lower:
+                    doc_source = "cochrane"
+
+            logger.info(
+                "[pipeline] Reprocessing dead letter: %s (error=%s, attempt=%d)",
+                file_path.name,
+                error_type_val,
+                doc.get("retry_count", 0) + 1,
+            )
+
+            # Try to re-parse the document
+            try:
+                parsed = await self._parse_with_ocr_fallback(file_path, doc_source, max_retries=1)
+                if parsed:
+                    logger.info("[pipeline] Successfully re-parsed: %s", file_path.name)
+                    # Remove from dead letter on success
+                    await self._dead_letter_db.delete_one({"_id": doc["_id"]})
+                    summary["succeeded"] += 1
+                else:
+                    # Increment retry count
+                    await self._dead_letter_db.update_one(
+                        {"_id": doc["_id"]},
+                        {"$inc": {"retry_count": 1}},
+                    )
+                    summary["failed"] += 1
+            except Exception as e:
+                logger.error(
+                    "[pipeline] Reprocessing failed for %s: %s",
+                    file_path.name,
+                    e,
+                )
+                await self._dead_letter_db.update_one(
+                    {"_id": doc["_id"]},
+                    {"$inc": {"retry_count": 1}},
+                )
+                summary["failed"] += 1
+
+            summary["reprocessed"] += 1
+
+        logger.info(
+            "[pipeline] Dead letter reprocessing complete: %s",
+            summary,
+        )
+        return summary

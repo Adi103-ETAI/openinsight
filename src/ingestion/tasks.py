@@ -78,18 +78,45 @@ class IngestionWorker:
 
             # Embed
             contextual_texts = [c.contextual_text for c in chunks]
-            dense_embeddings = await self._run_embed(self.embedder.embed_batch, contextual_texts)
+            dense_embeddings, failed_indices = await self._run_embed(
+                self.embedder.embed_batch, contextual_texts
+            )
+
+            # Filter out failed embeddings
+            if failed_indices:
+                logger.warning(
+                    f"[worker] {len(failed_indices)} embeddings failed, filtering valid chunks"
+                )
+                valid_indices = [i for i in range(len(chunks)) if i not in failed_indices]
+                chunks = [chunks[i] for i in valid_indices]
+                contextual_texts = [contextual_texts[i] for i in valid_indices]
+                dense_embeddings = dense_embeddings[valid_indices]
+
+                if not chunks:
+                    return IngestTaskResult(
+                        doc_id=doc_id,
+                        status="embed_failed",
+                        chunks_created=0,
+                        error="All embeddings failed",
+                    )
+
             sparse_vectors = [
                 self.embedder.compute_sparse_vector(text) for text in contextual_texts
             ]
 
             # Index to Milvus
-            self.indexer.upsert_chunks(
+            indexed = self.indexer.upsert_chunks(
                 chunks=chunks,
                 dense_embeddings=dense_embeddings,
                 sparse_vectors=sparse_vectors,
                 collection_name=self.settings.vector_collection_v2,
             )
+
+            # Verify indexing
+            if indexed != len(chunks):
+                logger.error(
+                    f"[worker] Indexing mismatch: expected {len(chunks)}, got {indexed}"
+                )
 
             # Store in MongoDB
             await self.mongo.store_document(normalized, enriched)

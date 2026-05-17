@@ -110,15 +110,15 @@ This cell installs the Python packages needed by the notebook and starts a local
 !apt-get update -qq && apt-get install -qq -y default-jre wget > /dev/null 2>&1
 
 # Download and start GROBID server
-!wget -q https://github.com/kermitt2/grobid/releases/download/0.8.1/grobid-0.8.1.zip
-!unzip -q -o grobid-0.8.1.zip -d grobid
+!wget -q https://github.com/grobidOrg/grobid/releases/download/0.9.0/grobid-0.9.0.zip
+!unzip -q -o grobid-0.9.0.zip -d grobid
 
 import subprocess
 import time
 
 # Start GROBID in background
 grobid_proc = subprocess.Popen(
-    ["./grobid/grobid-core-0.8.1/bin/grobid-core", "--port", "8070"],
+    ["./grobid/grobid-0.9.0/bin/grobid-server", "--port", "8070"],
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
 )

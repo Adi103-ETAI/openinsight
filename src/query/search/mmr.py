@@ -14,9 +14,9 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def maximal_marginal_relevance(
+    embedder: BaseEmbedder,
     chunks: list[RetrievedChunk],
-    embedder,
-    lambda_param: float = 0.7,
+    lambda_param: float = 0.5,
     n_select: int = 6,
     top_k: int | None = None,
 ) -> list[RetrievedChunk]:
@@ -26,7 +26,13 @@ def maximal_marginal_relevance(
         return chunks
 
     texts = [chunk.text[:400] for chunk in chunks]
-    embeddings = embedder.embed_batch(texts, batch_size=16)
+    embeddings, failed_indices = embedder.embed_batch(texts, batch_size=16)
+
+    # Handle failed embeddings - use zeros for failed indices (won't affect top results)
+    if failed_indices:
+        from loguru import logger
+        logger.warning(f"[MMR] {len(failed_indices)} embeddings failed, using zero vectors")
+        # Zero vectors will naturally be ranked lower due to low similarity
 
     selected_indices: list[int] = []
     candidate_indices = list(range(len(chunks)))

@@ -23,8 +23,16 @@ class BaseEmbedder(ABC):
     """Abstract base class for dense embedding providers."""
 
     @abstractmethod
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
-        """Embed a batch of texts. Returns (N, dim) numpy array."""
+    def embed_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> tuple[np.ndarray, list[int]]:
+        """Embed a batch of texts.
+
+        Returns:
+            Tuple of (embeddings array, list of failed indices). The embeddings
+            array contains zero vectors at failed indices - the caller must filter
+            them out based on the failed_indices list. Empty list means all succeeded.
+        """
 
     @abstractmethod
     def embed_query(self, query_text: str) -> np.ndarray:
@@ -162,7 +170,9 @@ class LocalEmbedder(BaseEmbedder):
     def dimension(self) -> int:
         return self._dim
 
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
+    def embed_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> tuple[np.ndarray, list[int]]:
         with torch.inference_mode():
             embeddings = self.dense_model.encode(
                 texts,
@@ -171,7 +181,8 @@ class LocalEmbedder(BaseEmbedder):
                 normalize_embeddings=True,
                 convert_to_numpy=True,
             )
-        return embeddings
+        # Local embedder doesn't have failures - return empty failed list
+        return embeddings, []
 
     def embed_query(self, query_text: str) -> np.ndarray:
         with torch.inference_mode():
@@ -239,14 +250,21 @@ class HuggingFaceEmbedder(BaseEmbedder):
             embedding = embedding / norm
         return embedding
 
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
+    def embed_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> tuple[np.ndarray, list[int]]:
         """Embed texts one by one via HF API (no batch endpoint on free tier).
-        
-        Raises RuntimeError if ALL embeddings fail, so the pipeline can retry
-        instead of silently indexing zero vectors.
+
+        Returns:
+            Tuple of (embeddings array, list of failed indices). The embeddings
+            array contains zero vectors at failed indices - the caller must filter
+            them out based on the failed_indices list.
+
+        Raises:
+            RuntimeError: If ALL embeddings fail (so pipeline can retry).
         """
         embeddings = []
-        failed_count = 0
+        failed_indices = []
         for i, text in enumerate(texts):
             try:
                 emb = self.embed_query(text)
@@ -254,12 +272,14 @@ class HuggingFaceEmbedder(BaseEmbedder):
             except Exception as e:
                 logger.warning(f"[HFEmbedder] Failed to embed text {i}: {e}")
                 embeddings.append(np.zeros(self._dim, dtype=np.float32))
-                failed_count += 1
+                failed_indices.append(i)
 
             # Respect rate limits: small delay between requests
             if (i + 1) % 10 == 0:
                 import time
                 time.sleep(1.0)
+
+        failed_count = len(failed_indices)
 
         # If ALL embeddings failed, raise an error so the pipeline can retry
         # instead of silently indexing useless zero vectors
@@ -273,11 +293,11 @@ class HuggingFaceEmbedder(BaseEmbedder):
 
         if failed_count > 0:
             logger.warning(
-                f"[HFEmbedder] {failed_count}/{len(texts)} embeddings failed, "
-                f"using zero vectors as fallback"
+                f"[HFEmbedder] {failed_count}/{len(texts)} embeddings failed "
+                f"(failed indices: {failed_indices[:10]}{'...' if len(failed_indices) > 10 else ''})"
             )
 
-        return np.array(embeddings, dtype=np.float32)
+        return np.array(embeddings, dtype=np.float32), failed_indices
 
     def _parse_embedding_response(self, data: Any) -> np.ndarray:
         """Parse HF feature-extraction response into a 1D numpy array."""
@@ -357,11 +377,14 @@ class CohereEmbedder(BaseEmbedder):
             return np.array(embeddings[0], dtype=np.float32)
         return np.zeros(self._dim, dtype=np.float32)
 
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> np.ndarray:
+    def embed_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> tuple[np.ndarray, list[int]]:
         """Embed batch using Cohere API (supports batch natively)."""
         import httpx
 
         all_embeddings = []
+        failed_indices = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
             payload = {
@@ -370,15 +393,32 @@ class CohereEmbedder(BaseEmbedder):
                 "input_type": "search_document",
                 "embedding_types": ["float"],
             }
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(self.API_URL, headers=self._headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(self.API_URL, headers=self._headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
 
-            embeddings = data.get("embeddings", {}).get("float", [])
-            all_embeddings.extend(embeddings)
+                embeddings = data.get("embeddings", {}).get("float", [])
+                # Handle case where API returns fewer embeddings than requested
+                for j, emb in enumerate(embeddings):
+                    if emb is not None and len(emb) > 0:
+                        all_embeddings.append(emb)
+                    else:
+                        all_embeddings.append(np.zeros(self._dim, dtype=np.float32).tolist())
+                        failed_indices.append(i + j)
+                # Pad for missing embeddings if any
+                for j in range(len(batch) - len(embeddings)):
+                    all_embeddings.append(np.zeros(self._dim, dtype=np.float32).tolist())
+                    failed_indices.append(i + len(embeddings) + j)
+            except Exception as e:
+                logger.warning(f"[CohereEmbedder] Batch {i // batch_size} failed: {e}")
+                # Add zero vectors for entire batch
+                for j in range(len(batch)):
+                    all_embeddings.append(np.zeros(self._dim, dtype=np.float32).tolist())
+                    failed_indices.append(i + j)
 
-        return np.array(all_embeddings, dtype=np.float32)
+        return np.array(all_embeddings, dtype=np.float32), failed_indices
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +508,9 @@ def reset_embedder() -> None:
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts. Returns list of float vectors."""
     model = get_embedder()
-    vectors = model.embed_batch(texts, batch_size=32)
+    vectors, failed = model.embed_batch(texts, batch_size=32)
+    if failed:
+        logger.warning(f"[embed_texts] {len(failed)} embeddings failed")
     return vectors.tolist()
 
 

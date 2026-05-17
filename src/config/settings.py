@@ -60,7 +60,12 @@ class Settings(BaseSettings):
     sparse_vocab_size: int = 50000  # Vocabulary size for TF-IDF sparse embeddings
     dense_model_name: str = "pritamdeka/S-PubMedBert-MS-MARCO"
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"  # Upgraded from bge-reranker-base
+    # ===================== GROBID =====================
     grobid_url: str = "http://localhost:8070"
+    grobid_timeout: int = 120  # Timeout for GROBID API calls in seconds
+    grobid_max_retries: int = 3  # Max number of retries for failed GROBID calls
+    grobid_retry_delay: float = 2.0  # Initial delay between retries (seconds)
+    grobid_health_check_timeout: int = 10  # Timeout for health check requests
 
     # NLP model for entity extraction (scispacy)
     spacy_model: str = "en_core_sci_md"
