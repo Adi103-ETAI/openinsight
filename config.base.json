@@ -1,0 +1,136 @@
+{
+  "_comment": "OpenInsight Base Configuration — non-secret defaults only",
+  "_note": "Secrets (API keys, passwords, connection strings) MUST go in .env or OS environment variables. This file is safe to commit to version control.",
+
+  "nvidia_nim_base_url": "https://integrate.api.nvidia.com/v1",
+  "nim_model": "meta/llama-3.1-70b-instruct",
+  "nim_temperature": 0.1,
+  "nim_max_tokens": 1024,
+
+  "mongodb_db": "openinsight",
+  "mongodb_max_pool_size": 50,
+  "mongodb_min_pool_size": 5,
+  "mongodb_max_idle_time_ms": 30000,
+  "mongodb_connect_timeout_ms": 5000,
+  "mongodb_server_selection_timeout_ms": 5000,
+
+  "vector_backend": "milvus",
+  "vector_collection": "openinsight_chunks",
+  "vector_collection_v2": "openinsight_v2",
+  "vector_dim": 768,
+  "vector_id_field": "id",
+  "vector_dense_field": "dense",
+  "vector_sparse_field": "sparse",
+  "vector_dense_metric": "COSINE",
+  "vector_sparse_metric": "IP",
+  "milvus_db_name": "default",
+  "milvus_cloud": false,
+
+  "redis_url": "redis://localhost:6379",
+
+  "ncbi_email": "sentarc.ai@gmail.com",
+
+  "embedding_model": "pritamdeka/S-PubMedBert-MS-MARCO",
+  "embedding_dim": 768,
+  "sparse_vocab_size": 50000,
+  "dense_model_name": "pritamdeka/S-PubMedBert-MS-MARCO",
+  "reranker_model_name": "BAAI/bge-reranker-v2-m3",
+
+  "grobid_url": "http://localhost:8070",
+  "grobid_timeout": 120,
+  "grobid_max_retries": 3,
+  "grobid_retry_delay": 2.0,
+  "grobid_health_check_timeout": 10,
+
+  "spacy_model": "en_core_sci_md",
+
+  "embed_provider": "local",
+  "cohere_embed_model": "embed-english-v3.0",
+  "hf_embed_model": "pritamdeka/S-PubMedBert-MS-MARCO",
+
+  "rerank_provider": "local",
+  "hf_rerank_model": "BAAI/bge-reranker-v2-m3",
+  "cohere_rerank_model": "rerank-english-v3.0",
+  "reranker_max_length": 1024,
+
+  "embedding_batch_size": 32,
+  "embedding_retry_batch_size": 16,
+  "embedding_timeout": 60,
+
+  "retrieval_top_k": 8,
+  "retrieval_multiplier": 3,
+  "retrieval_min_k": 20,
+  "retrieval_max_k": 30,
+
+  "reranker_top_n": 8,
+  "reranker_batch_size": 16,
+  "reranker_max_chars": 1200,
+
+  "cache_version": "v2",
+  "cache_ttl_search": 1800,
+  "cache_ttl_rerank": 3600,
+  "cache_ttl_embedding": 1800,
+
+  "top_k_retrieval": 50,
+  "top_k_after_fusion": 20,
+  "top_k_after_rerank": 8,
+  "top_k_final": 6,
+  "mmr_lambda": 0.7,
+  "hyde_enabled": true,
+  "rrf_k": 60,
+
+  "llm_query_rewrite": true,
+  "query_rewrite_fallback": true,
+  "query_rewrite_max_tokens": 64,
+  "query_rewrite_temperature": 0.0,
+  "hyde_timeout": 15.0,
+
+  "deep_insights_enabled": true,
+  "deep_insights_max_sub_queries": 6,
+  "deep_insights_sub_query_top_k": 8,
+  "deep_insights_timeout": 60,
+  "deep_insights_context_chars": 300,
+
+  "contradiction_detection": true,
+  "contradiction_min_chunks": 3,
+  "nli_model_name": "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract",
+
+  "celery_broker_url": "redis://localhost:6379/0",
+  "celery_concurrency": 4,
+  "ingestion_workers": 4,
+  "ingestion_batch_size": 10,
+  "ingestion_max_retries": 3,
+  "ingestion_retry_delay": 2.0,
+  "ingestion_max_chunks_per_doc": 100,
+  "max_concurrent_docs": 6,
+  "retry_backoff_multiplier": 2.0,
+  "retry_max_delay": 60.0,
+
+  "dedup_enabled": true,
+  "dedup_title_similarity": 0.9,
+  "dedup_content_hash_length": 16,
+  "cache_key_prefix_length": 16,
+
+  "quality_score_threshold": 0.3,
+  "quality_high_value_patterns_count": 10,
+  "quality_low_value_penalty": 0.5,
+
+  "dead_letter_enabled": true,
+  "dead_letter_collection": "failed_documents",
+
+  "chunk_target_tokens": 350,
+  "chunk_max_tokens": 500,
+  "chunk_overlap_tokens": 50,
+  "chunk_min_tokens": 80,
+
+  "scheduler_pubmed_cron": "0 2 * * 0",
+  "scheduler_who_cron": "0 3 1 * *",
+  "scheduler_cdc_cron": "0 4 1 * *",
+  "scheduler_cochrane_cron": "0 5 1 * *",
+  "scheduler_enabled": true,
+
+  "hallucination_enabled": true,
+  "hallucination_threshold": 0.75,
+
+  "log_level": "DEBUG"
+}

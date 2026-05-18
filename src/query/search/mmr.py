@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .retriever import RetrievedChunk
+from src.ml.embedding.embedder import BaseEmbedder
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:

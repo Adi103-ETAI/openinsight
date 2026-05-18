@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
 import torch
+from loguru import logger
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src.config.settings import get_settings
 from .retriever import RetrievedChunk
-
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

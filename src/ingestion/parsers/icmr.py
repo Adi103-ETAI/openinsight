@@ -1,12 +1,11 @@
 import re
 import importlib
-import logging
 from pathlib import Path
+
+from loguru import logger
 
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
-
-logger = logging.getLogger(__name__)
 
 NOISE_WORDS = {
     "icmr",

@@ -83,7 +83,7 @@
 
 | Module | Responsibility |
 |--------|----------------|
-| `pipeline.py` | Main orchestration |
+| `pipeline.py` | Main orchestration with dead letter queue, OCR fallback, retry logic |
 | `run_ingestion.py` | CLI entry point |
 | `tasks.py` | Celery tasks for distributed processing |
 | `scheduler.py` | Scheduled ingestion jobs |
@@ -96,15 +96,24 @@
 | `deduplication.py` | Advanced deduplication logic |
 | `validation.py` | Document validation |
 | `monitoring.py` | Metrics and monitoring |
-| `parsers/*` | PDF/XML/HTML parsing (GROBID, ICMR, PubMed, OCR, etc.) |
+| `llamaindex_integration.py` | Parent-child chunk retrieval (LlamaIndex patterns) |
+| `parsers/*` | PDF/XML/HTML parsing (GROBID 0.9.0, ICMR, PubMed, OCR, etc.) |
 | `celery_app.py` | Distributed task queue |
+
+### Utility Layer (`src/utils/`)
+
+| Module | Responsibility |
+|--------|----------------|
+| `pubmed_client.py` | Shared NCBI Entrez API client with rate limiting and retry logic |
+| `date_utils.py` | Date parsing and year extraction from medical literature |
+| `text_utils.py` | Text cleaning, keyword extraction, quality assessment |
 
 ### ML Layer (`src/ml/`)
 
 | Module | Responsibility |
 |--------|----------------|
 | `chunking/chunker.py` | Hierarchical text chunking |
-| `embedding/embedder.py` | Dual embedding (dense + sparse) |
+| `embedding/embedder.py` | Multi-provider embedding (local/HF/Cohere), returns `(embeddings, failed_indices)` |
 | `ner.py` | Named entity recognition |
 
 ### Data Layer (`src/data/`)
@@ -115,10 +124,19 @@
 | `vector/vector_store.py` | Vector storage (Milvus) |
 
 ### Config (`src/config/`)
-- **settings.py** - All settings from environment variables
+- **settings.py** - All settings from environment variables, including GROBID timeout/retry config, embedding provider selection, dead letter queue settings
 
 ### Services (`src/services/`)
 - **llm_client.py** - NVIDIA NIM API client
+
+---
+
+## Logging
+
+All modules use `loguru` for structured logging. Key prefixes:
+- `[pipeline]` — Ingestion pipeline orchestration
+- `[HFEmbedder]` / `[CohereEmbedder]` — Embedding providers
+- `[PubMedClient]` — NCBI API interactions
 
 ---
 
@@ -136,15 +154,18 @@
 
 ### Ingestion Flow
 1. Files loaded from directory
-2. Parsed (PDF/XML → text)
-3. Deduplication check
-4. Metadata enriched
-5. Chunked (350 tokens, 50 overlap)
-6. Quality scored
-7. Embedded (PubMedBERT)
-8. Indexed to Milvus
-9. Stored in MongoDB
-10. Metrics saved
+2. Parsed (PDF/XML → text) with OCR fallback and retry logic
+3. Failed documents stored to dead letter queue for reprocessing
+4. Deduplication check
+5. Metadata enriched
+6. Chunked (350 tokens, 50 overlap)
+7. Quality scored
+8. Embedded (PubMedBERT or configurable provider) — returns `(embeddings, failed_indices)`
+9. Failed embeddings filtered out before indexing
+10. Indexed to Milvus with Zilliz verification (expected vs actual count)
+11. Stored in MongoDB
+12. Metrics saved
+13. Checkpoint updated for resume support
 
 ---
 
@@ -152,10 +173,13 @@
 
 All config via environment variables (`.env`):
 - Database connections
-- API keys (NVIDIA, NCBI)
-- Model names
+- API keys (NVIDIA, NCBI, HuggingFace, Cohere)
+- Model names and embedding provider selection
 - Pipeline parameters (top_k, batch sizes, thresholds)
 - Feature flags (hyde, contradiction detection, tracing)
+- GROBID settings (timeout, max retries, retry delay, health check timeout)
+- Dead letter queue configuration
+- CPU-based worker defaults (75% of cores)
 
 See `.env.example` for all options.
 

@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from enum import Enum
 from typing import Any
 
 import redis.asyncio as aioredis
+from loguru import logger
 
 from src.config.settings import get_settings
-
-logger = logging.getLogger(__name__)
 
 
 class SearchCache:

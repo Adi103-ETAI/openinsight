@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-from .intent_router import IntentRouter, QueryComplexity, RoutingDecision
+from loguru import logger
+
+from .intent_router import IntentRouter, QueryComplexity
 from .query_decomposer import (
-    DecompositionResult,
     QueryDecomposer,
     SubQuery,
 )
@@ -16,8 +16,6 @@ from src.config.settings import get_settings
 from src.query.contradiction_detector import ContradictionDetector
 from src.query.search.cache import SearchCache
 from src.query.search.retriever import HybridRetriever, RetrievedChunk
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

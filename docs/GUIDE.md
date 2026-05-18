@@ -57,9 +57,6 @@ python scripts/run.py icmr ./data/pdfs -w 8 --recreate --stats
 # Dry run (test without indexing)
 python scripts/run.py who ./pdfs --dry-run
 
-# Limit files
-python scripts/run.py pubmed ./pdfs --limit 100
-
 # Interactive mode
 python scripts/run.py
 ```
@@ -90,9 +87,11 @@ pubmed, icmr, cochrane, nmc_guideline, rssdi, who, cdc, statpearls
 | `--dry-run` | Parse only, no indexing | false |
 | `--skip-embed` | Skip embedding | false |
 | `--skip-index` | Skip vector indexing | false |
-| `--limit N` | Limit files to process | none |
 | `--stats` | Show detailed stats | false |
 | `--resume` | Resume from checkpoint | true |
+| `--reset` | Reset checkpoint | false |
+
+> **Note**: The `--limit` argument was removed. To limit files, use shell commands like `ls | head -n N` or filter at the directory level.
 
 ---
 
@@ -105,17 +104,20 @@ src/
 ├── constants/        # Magic values
 ├── data/             # MongoDB & vector storage
 ├── ingestion/        # Data pipeline
-│   └── parsers/      # PDF/XML parsers
+│   ├── parsers/      # PDF/XML parsers (GROBID 0.9.0, ICMR, OCR, etc.)
+│   └── llamaindex_integration.py  # Parent-child chunk retrieval
 ├── ml/               # ML components
 │   ├── chunking/     # Document chunking
-│   ├── embedding/    # Text embeddings
-│   └── ner.py        # Named entity recognition
+│   └── embedding/    # Text embeddings (local/HF/Cohere providers)
 ├── query/            # Query pipeline
 │   ├── search/       # RAG retrieval
 │   ├── agents/       # DeepInsights agents
-│   └── validation/  # Answer validation
+│   └── validation/   # Answer validation
 ├── services/         # LLM client
-└── utils/            # Utilities
+└── utils/            # Shared utilities
+    ├── pubmed_client.py   # NCBI Entrez API client
+    ├── date_utils.py      # Date parsing helpers
+    └── text_utils.py      # Text processing helpers
 ```
 
 ---

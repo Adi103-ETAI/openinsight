@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 from typing import Any, Optional
 
-from src.data.mongo.connection import get_mongo_db
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from src.data.mongo.connection import get_mongo_db
 
 
 class DocumentDeduplicator:

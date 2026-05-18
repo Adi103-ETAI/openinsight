@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Any
+
+from loguru import logger
 
 from src.ingestion.celery_app import celery_app
 from src.ml.chunking.chunker import HierarchicalChunkerV3
@@ -12,8 +13,6 @@ from src.ml.embedding.embedder import create_embedder
 from src.ingestion.metadata import MetadataEnricherV2
 from src.data.mongo.doc_store import MongoDocStoreV2
 from src.ingestion.vector_indexer import VectorIndexer
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

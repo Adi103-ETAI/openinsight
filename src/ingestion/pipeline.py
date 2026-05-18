@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import xml.etree.ElementTree as ET
 
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from loguru import logger
 
 from src.config.settings import get_settings
 from src.ml.chunking.chunker import HierarchicalChunkerV3
@@ -25,8 +25,6 @@ from src.ingestion.parsers.icmr import ICMRParser
 from src.ingestion.parsers.ocr import OCRParser
 from src.ingestion.quality import score_chunks
 from src.ingestion.vector_indexer import VectorIndexer
-
-logger = logging.getLogger(__name__)
 
 # Error types for dead letter queue
 ERROR_TYPE_PARSE = "parse_error"

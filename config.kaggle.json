@@ -1,0 +1,19 @@
+{
+  "_comment": "Kaggle/Colab overrides — GPU notebook environment settings",
+  "_note": "Secrets (API keys, passwords, connection strings) MUST go in .env or OS environment variables. This file is safe to commit.",
+
+  "app_env": "kaggle",
+  "log_level": "INFO",
+
+  "milvus_cloud": true,
+
+  "embed_provider": "local",
+  "rerank_provider": "local",
+
+  "parsing_thread_workers": 2,
+  "ingestion_thread_workers": 2,
+  "max_concurrent_docs": 3,
+
+  "embedding_batch_size": 16,
+  "embedding_retry_batch_size": 8
+}

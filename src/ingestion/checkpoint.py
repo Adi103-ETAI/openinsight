@@ -7,14 +7,13 @@ Persists progress to MongoDB to allow resuming from last successful batch on fai
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
+
+from loguru import logger
 
 from src.config.settings import get_settings
 from src.data.mongo.connection import get_mongo_db
-
-logger = logging.getLogger(__name__)
 
 
 class IngestionCheckpoint:

@@ -8,12 +8,11 @@ the application to avoid connection overhead per batch.
 from __future__ import annotations
 
 import importlib
-import logging
 from typing import Any, Optional
 
-from src.config.settings import get_settings
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from src.config.settings import get_settings
 
 # Singleton instance
 _mongo_client: Optional[Any] = None

@@ -6,7 +6,6 @@ have valid evidence levels, and are not outdated.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 from bson import ObjectId
 from loguru import logger

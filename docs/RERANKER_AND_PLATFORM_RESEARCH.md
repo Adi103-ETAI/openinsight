@@ -1,7 +1,10 @@
 # Research Report: Reranker Models & Ingestion Platforms for OpenInsight Medical RAG
 
 > Research conducted: March 2026  
+> Last updated: May 2026  
 > Context: OpenInsight medical RAG system processing Indian clinical guidelines, PubMed papers, WHO/CDC docs
+
+> **Status**: The recommended `bge-reranker-v2-m3` has been adopted as the default reranker model in production.
 
 ---
 

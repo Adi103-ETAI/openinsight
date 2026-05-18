@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from src.config.settings import get_settings
-from src.ml.embedding.embedder import BaseEmbedder, create_embedder, get_embedder
+from src.ml.embedding.embedder import BaseEmbedder, get_embedder
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

@@ -5,7 +5,6 @@ source consistency, hallucination risk, and quality scores.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 from loguru import logger
 

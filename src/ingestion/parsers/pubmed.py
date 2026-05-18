@@ -1,119 +1,67 @@
-import re
-import time
+"""
+PubMed Parser
 
-from Bio import Entrez
+Retrieves articles from PubMed via the NCBI Entrez API.
+Uses the shared PubMedClient for all Entrez interactions.
+
+Usage:
+    parser = PubMedParser(query="malaria treatment", max_results=100)
+    documents = parser.parse()
+"""
+
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from src.config.settings import get_settings
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
-
-COMMON_QUERY_WORDS = {"india", "treatment", "management", "clinical", "study"}
+from src.utils.pubmed_client import PubMedClient
+from src.utils.text_utils import extract_keywords_from_query
 
 
 class PubMedParser(BaseParser):
+    """Fetches and parses PubMed articles via NCBI Entrez API."""
+
     def __init__(self, query: str, max_results: int = 100):
         self.query = query
         self.max_results = max_results
         self.settings = get_settings()
+        self._client = PubMedClient(self.settings)
 
     @property
     def source_type(self) -> str:
         return "pubmed"
 
     def _extract_condition_tags(self) -> list[str]:
-        tokens = re.findall(r"[A-Za-z0-9\-]+", self.query.lower())
-        tags: list[str] = []
-        for token in tokens:
-            if len(token) < 4:
-                continue
-            if token in COMMON_QUERY_WORDS:
-                continue
-            if token not in tags:
-                tags.append(token)
-        return tags
-
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    def _fetch_records(self) -> list[dict]:
-        Entrez.email = self.settings.ncbi_email
-        Entrez.api_key = self.settings.ncbi_api_key or None
-
-        with Entrez.esearch(
-            db="pubmed", term=self.query, retmax=self.max_results
-        ) as handle:
-            search_result = Entrez.read(handle)
-        pmids = search_result.get("IdList", [])
-
-        logger.info(f"PubMed query='{self.query}' found {len(pmids)} results")
-        if not pmids:
-            return []
-
-        # Use config values for rate limiting (configurable based on API tier)
-        sleep_seconds = (
-            self.settings.pubmed_rate_limit_with_key
-            if self.settings.ncbi_api_key
-            else self.settings.pubmed_rate_limit_seconds
-        )
-        time.sleep(sleep_seconds)
-
-        with Entrez.efetch(
-            db="pubmed", id=pmids, rettype="xml", retmode="xml"
-        ) as handle:
-            fetched = Entrez.read(handle)
-
-        return fetched.get("PubmedArticle", [])
+        """Extract meaningful condition keywords from the search query."""
+        return extract_keywords_from_query(self.query)
 
     def parse(self) -> list[DocumentRecord]:
         try:
-            articles = self._fetch_records()
-            documents: list[DocumentRecord] = []
+            pmids = self._client.search_pubmed(
+                self.query, max_results=self.max_results
+            )
+            if not pmids:
+                logger.info(
+                    f"PubMed query='{self.query}' found 0 results"
+                )
+                return []
+
+            articles = self._client.fetch_pubmed_articles(pmids)
             condition_tags = self._extract_condition_tags()
+            documents: list[DocumentRecord] = []
 
             for article in articles:
-                citation = article.get("MedlineCitation", {})
-                article_data = citation.get("Article", {})
-
-                title = str(article_data.get("ArticleTitle", "")).strip()
-                if not title:
+                pubmed_article = PubMedClient.article_to_pubmed_article(article)
+                if pubmed_article is None:
                     continue
-
-                abstract = article_data.get("Abstract", {})
-                abstract_text_parts = (
-                    abstract.get("AbstractText", [])
-                    if isinstance(abstract, dict)
-                    else []
-                )
-                abstract_text = " ".join(
-                    str(part).strip()
-                    for part in abstract_text_parts
-                    if str(part).strip()
-                )
-                if not abstract_text:
-                    continue
-
-                pmid = str(citation.get("PMID", "")).strip()
-
-                journal = article_data.get("Journal", {})
-
-                year = ""
-                journal_issue = journal.get("JournalIssue", {})
-                pub_date = journal_issue.get("PubDate", {})
-                if isinstance(pub_date, dict):
-                    year = str(pub_date.get("Year", "")).strip()
-                    if not year:
-                        medline_date = str(pub_date.get("MedlineDate", "")).strip()
-                        year_match = re.search(r"\b(19|20)\d{2}\b", medline_date)
-                        if year_match:
-                            year = year_match.group(0)
 
                 doc = DocumentRecord(
                     source_type=self.source_type,
-                    title=title,
-                    content=abstract_text,
-                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else None,
-                    doi=f"PMID:{pmid}" if pmid else None,
-                    published_date=year or None,
+                    title=pubmed_article.title,
+                    content=pubmed_article.abstract,
+                    url=pubmed_article.url,
+                    doi=pubmed_article.doi,
+                    published_date=pubmed_article.year or None,
                     condition_tags=condition_tags,
                 )
                 documents.append(doc)
@@ -122,6 +70,7 @@ class PubMedParser(BaseParser):
                 f"PubMed query='{self.query}' parsed {len(documents)} documents with abstracts"
             )
             return documents
+
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             logger.error(f"PubMed parse failed for query='{self.query}': {exc}")
             return []

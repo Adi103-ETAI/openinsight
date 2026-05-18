@@ -4,7 +4,6 @@ import hashlib
 import re
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
-from functools import lru_cache
 from typing import Any
 
 import numpy as np

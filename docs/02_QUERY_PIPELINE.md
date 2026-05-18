@@ -164,6 +164,14 @@ HYDE generation failed (Timeout(15.0s)), falling back to original query
 Reranker failed (CUDA out of memory), falling back to score sorting
 ```
 
+### Embedder API
+
+The embedder's `embed_batch()` method returns a tuple `(embeddings, failed_indices)`:
+- `embeddings`: numpy array with zero vectors at failed indices
+- `failed_indices`: list of indices that failed (empty list means all succeeded)
+
+Callers must filter out failed embeddings before indexing to avoid zero-vector pollution.
+
 ### MMR Behavior
 
 The Maximal Marginal Relevance (MMR) diversity step now respects the user's requested `top_k` from the request. The final result count is determined by `payload.top_k` rather than a fixed internal value, ensuring users get exactly the number of results they request.
@@ -204,6 +212,16 @@ CACHE_TTL_RERANK = 3600       # 1 hour
 
 # HyDE (Hypothetical Document Embeddings)
 HYDE_ENABLED = true            # Generate synthetic doc for better retrieval
+
+# Embedding
+EMBED_PROVIDER = "local"       # local | huggingface | cohere
+EMBEDDING_BATCH_SIZE = 32      # Batch size for embedding
+EMBEDDING_RETRY_BATCH_SIZE = 16  # Reduced batch size on retry
+
+# Reranker
+RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"  # Upgraded from bge-reranker-base
+RERANKER_MAX_LENGTH = 1024     # Max token length for reranker input
+```
 
 ---
 

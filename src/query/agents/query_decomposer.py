@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import httpx
+from loguru import logger
 
 from src.config.settings import get_settings
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

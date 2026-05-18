@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field

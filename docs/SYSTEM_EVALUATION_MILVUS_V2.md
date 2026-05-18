@@ -56,15 +56,17 @@ Documents → Parse → Metadata Enrich → Hierarchical Chunk → Dual Embed �
 4. Enforce min/max token constraints
 5. Track chunk position within document (chunk_index/total_chunks)
 
-#### ✅ Dual Embedding Strategy (Score: 8/10)
+#### ✅ Dual Embedding Strategy (Score: 8.5/10) — *Improved*
 
-**Dense Embeddings**:
-- Model: `pritamdeka/S-PubMedBert-MS-MARCO` (768-dimensional)
+**Dense Embeddings** (configurable provider via `EMBED_PROVIDER`):
+- **Providers**: `local` (SentenceTransformers), `huggingface` (Inference API), `cohere` (Embed API)
+- Model: `pritamdeka/S-PubMedBert-MS-MARCO` (768-dimensional) for local/HF
 - Domain: Medical-specific corpus pre-training
 - Normalization: Cosine similarity (L2 normalized)
 - GPU acceleration: CUDA-enabled when available
 - Batch processing: Supports 32-256 batch sizes
 - Uses contextual_text that includes: title, section context, source type
+- **Failure handling**: Returns `(embeddings, failed_indices)` — failed entries filtered before indexing
 
 **Sparse Vectors** (50K vocabulary):
 - Medical compound tokenization (40+ compound terms)
@@ -79,24 +81,28 @@ Documents → Parse → Metadata Enrich → Hierarchical Chunk → Dual Embed �
 
 ### Limitations:
 
-#### ❌ Batch Processing Bottleneck (2.5/10)
+#### ❌ Batch Processing Bottleneck (5/10)
 - **Sequential batch processing**: Default 10 files/batch
 - **No async document parsing**: Despite async pipeline wrapper
 - **Single MongoDB connection**: Per batch (not pooled)
 - **Opportunity**: Could parallelize ≥3x with concurrent batches
 - **Throughput**: ~10 docs/sec vs. 30-50 docs/sec potential
+- **Improvement**: Worker count now auto-calculated (75% of CPU cores, min 2, max 16)
 
-#### ❌ Error Recovery (3/10)
-- **Silent failures**: Failed documents logged but not retried
-- **No dead-letter queue**: Problematic files not tracked for manual intervention
-- **No vector validation**: Post-generation embedding quality unchecked
-- **No retry mechanism**: Failed PDF → OCR not attempted automatically
+#### ✅ Error Recovery (7/10) — *Improved*
+- **Dead letter queue**: Failed documents tracked in `failed_documents` collection
+- **Error type classification**: `parse_error`, `embed_error`, `index_error`, `ocr_error`
+- **Reprocessing**: `pipeline.reprocess_dead_letter()` for retrying failed documents
+- **OCR fallback**: Scanned PDFs auto-detected, primary parser skipped
+- **Retry logic**: Exponential backoff for parsing and embedding
+- **Zilliz verification**: Post-upsert count validation detects data integrity issues
+- **Remaining gap**: No automatic retry for vector DB failures during indexing
 
-#### ❌ Scalability Concerns (4/10)
-- **Thread pool limitation**: 4 workers (bottleneck on 8-core+ machines)
+#### ❌ Scalability Concerns (5/10) — *Improved*
+- **Thread pool**: Now CPU-based (75% of cores, min 2, max 16) — adapts to hardware
 - **In-memory accumulation**: All chunks held until batch complete
 - **No streaming**: Doesn't stream to vector DB until batch finishes
-- **No checkpoint/resume**: Full restart required on failure
+- **Checkpoint/resume**: ✅ Now implemented — jobs can be paused and resumed
 
 ### Milvus Integration Quality: 8.5/10
 
@@ -107,6 +113,7 @@ Documents → Parse → Metadata Enrich → Hierarchical Chunk → Dual Embed �
 - ✅ V5_CM index type for SPARSE_INVERTED_INDEX (latest Milvus)
 - ✅ Automatic load_collection on ensure_collection
 - ✅ UUID5 deterministic point_id generation
+- ✅ Post-upsert verification: expected count vs indexed count mismatch detection
 
 **Schema Design** (from milvus_store.py):
 ```python
@@ -767,16 +774,16 @@ With boost:    ICMR guideline (2023) + IDA RCT (2024) ranked high ✅
 ╔════════════════════════════════════════════════╗
 ║          OPENINSIGHT v2 SYSTEM RATINGS        ║
 ╠════════════════════════════════════════════════╣
-║ Data Ingestion Pipeline:      ████████░ 8.3/10║
+║ Data Ingestion Pipeline:      █████████░ 8.8/10║
 ║ Standard Search Pipeline:     ████████░ 8.7/10║
 ║ Milvus Integration:           ████████░ 8.5/10║
 ║ Query Understanding:          ████████░ 8.5/10║
 ║ Reranking Strategy:           ████████░ 8.5/10║
 ║ Response Validation:          ████████░ 8.5/10║
 ║ Caching Strategy:             ████████░ 8.0/10║
-║ Error Handling:               ██████░░░ 6.0/10║
+║ Error Handling:               ████████░ 7.5/10║
 ║ ─────────────────────────────────────────────│
-║ Overall System Health:        ████████░ 8.4/10║
+║ Overall System Health:        ████████░ 8.5/10║
 ╚════════════════════════════════════════════════╝
 ```
 
@@ -784,13 +791,17 @@ With boost:    ICMR guideline (2023) + IDA RCT (2024) ranked high ✅
 
 **Your Milvus migration is architecturally sound** with excellent design patterns:
 - ✅ Hierarchical chunking with context preservation
-- ✅ Dual embeddings (semantic + keyword)
+- ✅ Dual embeddings (semantic + keyword) with multi-provider support
 - ✅ Evidence-based ranking respects clinical hierarchy
 - ✅ Hybrid retrieval with RRF fusion
 - ✅ Query intent classification enables intelligent filtering
+- ✅ Dead letter queue with reprocessing capability
+- ✅ Checkpoint/resume for long-running ingestion jobs
+- ✅ GROBID 0.9.0 with configurable timeouts and retries
+- ✅ OCR auto-detection for scanned PDFs
 
 **Main bottlenecks**:
-- ⚠️ Scalability at ingestion time (sequential processing)
+- ⚠️ Scalability at ingestion time (sequential batch processing)
 - ⚠️ Query latency variance (reranker GPU contention)
 - ⚠️ Limited distributed capability (single-instance design)
 
@@ -805,6 +816,7 @@ With boost:    ICMR guideline (2023) + IDA RCT (2024) ranked high ✅
 
 ## Document Metadata
 - **Generated**: May 2026
+- **Last Updated**: May 2026 (GROBID 0.9.0, LlamaIndex integration, utilities, pipeline fixes)
 - **System Version**: OpenInsight v2 (Milvus Backend)
 - **Evaluation Scope**: Data ingestion + search pipelines
 - **Vertical**: Clinical RAG (Medical Evidence Base)

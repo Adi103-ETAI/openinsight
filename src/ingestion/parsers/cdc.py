@@ -6,13 +6,12 @@ Health (NIH) guidelines via:
   - PubMed search restricted to CDC/NIH corporate authors
   - CDC Public Health Publications API (https://tools.cdc.gov/api/v2/resources)
 
+Uses shared utilities for PubMed fallback and date extraction.
+
 Usage:
     parser = CDCParser(query="malaria prevention", max_results=30)
     documents = parser.parse()
 """
-
-import re
-import time
 
 import requests
 from loguru import logger
@@ -21,6 +20,8 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from src.config.settings import get_settings
 from src.ingestion.document_db import DocumentRecord
 from src.ingestion.parsers.base import BaseParser
+from src.utils.date_utils import extract_year_from_text
+from src.utils.pubmed_client import PubMedClient
 
 _CDC_API_BASE = "https://tools.cdc.gov/api/v2/resources/media"
 _REQUEST_TIMEOUT = 15
@@ -39,6 +40,7 @@ class CDCParser(BaseParser):
         self.query = query
         self.max_results = max_results
         self.settings = get_settings()
+        self._pubmed_client = PubMedClient(self.settings)
 
     @property
     def source_type(self) -> str:
@@ -72,12 +74,9 @@ class CDCParser(BaseParser):
         if not title or not description:
             return None
 
+        # Extract year using shared utility
         date_str = (item.get("datePublished") or "").strip()
-        year_str = ""
-        if date_str:
-            m = re.search(r"\b(19|20)\d{2}\b", date_str)
-            if m:
-                year_str = m.group(0)
+        year_str = extract_year_from_text(date_str) if date_str else ""
 
         url = (item.get("sourceUrl") or "").strip() or None
 
@@ -97,11 +96,6 @@ class CDCParser(BaseParser):
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def _fetch_pubmed_fallback(self) -> list[DocumentRecord]:
         """PubMed search for CDC/NIH-authored records."""
-        from Bio import Entrez
-
-        Entrez.email = self.settings.ncbi_email
-        Entrez.api_key = self.settings.ncbi_api_key or None
-
         org_filter = (
             '("Centers for Disease Control and Prevention"[Corporate Author] OR '
             '"National Institutes of Health"[Corporate Author] OR '
@@ -109,52 +103,29 @@ class CDCParser(BaseParser):
         )
         full_query = f"({self.query}) AND {org_filter}"
 
-        with Entrez.esearch(
-            db="pubmed", term=full_query, retmax=self.max_results
-        ) as handle:
-            search_result = Entrez.read(handle)
-
-        pmids = search_result.get("IdList", [])
+        pmids = self._pubmed_client.search_pubmed(
+            full_query, max_results=self.max_results
+        )
         if not pmids:
             return []
 
-        # Use config values for rate limiting (configurable based on API tier)
-        sleep_seconds = (
-            self.settings.pubmed_rate_limit_with_key
-            if self.settings.ncbi_api_key
-            else self.settings.pubmed_rate_limit_seconds
-        )
-        time.sleep(sleep_seconds)
-
-        with Entrez.efetch(
-            db="pubmed", id=pmids, rettype="xml", retmode="xml"
-        ) as handle:
-            fetched = Entrez.read(handle)
+        articles = self._pubmed_client.fetch_pubmed_articles(pmids)
 
         documents: list[DocumentRecord] = []
-        for article in fetched.get("PubmedArticle", []):
-            citation = article.get("MedlineCitation", {})
-            article_data = citation.get("Article", {})
-            title = str(article_data.get("ArticleTitle", "")).strip()
-            if not title:
-                continue
-            abstract = article_data.get("Abstract", {})
-            abstract_parts = (
-                abstract.get("AbstractText", []) if isinstance(abstract, dict) else []
+        for article in articles:
+            pubmed_article = PubMedClient.article_to_pubmed_article(
+                article, journal_override="CDC/NIH Publications"
             )
-            abstract_text = " ".join(
-                str(p).strip() for p in abstract_parts if str(p).strip()
-            )
-            if not abstract_text:
+            if pubmed_article is None:
                 continue
-            pmid = str(citation.get("PMID", "")).strip()
+
             documents.append(
                 DocumentRecord(
                     source_type=self.source_type,
-                    title=title,
-                    content=abstract_text,
-                    url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else None,
-                    doi=f"PMID:{pmid}" if pmid else None,
+                    title=pubmed_article.title,
+                    content=pubmed_article.abstract,
+                    url=pubmed_article.url,
+                    doi=pubmed_article.doi,
                     journal="CDC/NIH Publications",
                     study_type="guideline",
                     evidence_level=2,

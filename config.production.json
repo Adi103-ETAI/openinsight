@@ -1,0 +1,18 @@
+{
+  "_comment": "Production overrides — only settings that differ from config.base.json",
+  "_note": "Secrets (API keys, passwords, connection strings) MUST go in .env or OS environment variables. This file is safe to commit.",
+
+  "app_env": "production",
+  "log_level": "INFO",
+
+  "milvus_cloud": true,
+
+  "embed_provider": "huggingface",
+  "rerank_provider": "cohere",
+
+  "hallucination_threshold": 0.80,
+
+  "celery_concurrency": 8,
+  "ingestion_workers": 8,
+  "max_concurrent_docs": 12
+}

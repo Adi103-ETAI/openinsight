@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import logging
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
+from loguru import logger
 
 from src.config.settings import get_settings
-
-logger = logging.getLogger(__name__)
 
 
 class NVIDIAClient:

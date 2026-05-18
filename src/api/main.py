@@ -2,11 +2,24 @@ import uuid
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# Route and component imports
+from src.api.routes import search as search_router
+from src.api.routes import deep_insights as deep_insights_router
+from src.query.search.cache import SearchCache
+from src.query.search.query_understanding import QueryUnderstanding
+from src.query.search.reranker import get_reranker
+from src.query.search.retriever import HybridRetriever
+
+# Initialize loguru with centralized configuration before anything else
+from src.config.logging_config import configure_loguru
+
+configure_loguru()
 
 # Request ID context variable for propagation across components
 request_id_var: ContextVar[str] = ContextVar("request_id", default="unknown")
@@ -135,43 +148,16 @@ async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name
             logger.warning(f"Failed to close redis cache cleanly: {exc}")
 
 
-from src.api.routes import search as search_router
-from src.api.routes import deep_insights as deep_insights_router
-from src.query.search.cache import SearchCache
-from src.query.search.query_understanding import QueryUnderstanding
-from src.query.search.reranker import get_reranker
-from src.query.search.retriever import HybridRetriever
-
-
 def setup_logging_with_request_id():
-    """Configure loguru to include request ID in all log messages."""
-    from loguru import logger
-    import sys
+    """Configure loguru to include request ID in all log messages.
 
-    # Remove default handler to reconfigure with custom format
-    logger.remove()
-
-    # Add handler with custom format that includes request_id from extra
-    # Use a custom format that safely handles missing request_id
-    def format_with_request_id(record):
-        request_id = record["extra"].get("request_id", "unknown")
-        return (
-            f"{record['time'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} | "
-            f"{record['level']:<8} | "
-            f"{record['name']}:{record['function']}:{record['line']} - "
-            f"{record['message']} | request_id={request_id}"
-        )
-
-    logger.add(
-        sys.stderr,
-        format=format_with_request_id,
-        level="INFO",
-        serialize=False,
-    )
-
-    # Note: Request ID is bound per-request in the middleware via request_logger.bind()
-    # Static configuration at module load time is not needed as request_id defaults to "unknown"
-    # The middleware will properly bind the correct request_id for each request
+    Note: Request ID binding is handled per-request in RequestIDMiddleware
+    via logger.bind(request_id=...). The centralized config in logging_config.py
+    already includes request_id_str in the format when present.
+    """
+    # Loguru is already configured by configure_loguru() above.
+    # The RequestIDMiddleware binds request_id per-request via logger.bind().
+    pass
 
 
 app = FastAPI(

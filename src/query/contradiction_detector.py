@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 import torch
-from src.config.settings import get_settings
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from src.config.settings import get_settings
 
 settings = get_settings()
 

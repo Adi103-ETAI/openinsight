@@ -12,14 +12,14 @@ Backward compatible with existing MongoDB/Milvus setup.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.config.settings import get_settings
+from loguru import logger
+from pymilvus import DataType, MilvusClient
 
-logger = logging.getLogger(__name__)
+from src.config.settings import get_settings
 
 # Import settings for default values
 _settings = get_settings()

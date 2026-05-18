@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import importlib
-import logging
 from datetime import datetime
 from typing import Any, Optional
 
+from loguru import logger
+
 from src.config.settings import get_settings
 from src.data.mongo.connection import get_mongo_db
-
-logger = logging.getLogger(__name__)
 
 
 class MongoDocStoreV2:
