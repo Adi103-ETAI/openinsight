@@ -1,3 +1,4 @@
+import os
 import uuid
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
@@ -11,6 +12,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Route and component imports
 from src.api.routes import search as search_router
 from src.api.routes import deep_insights as deep_insights_router
+from src.api.routes import vault as vault_router
+from src.api.routes import reports as reports_router
+from src.api.middleware.rate_limit import RateLimitMiddleware
 from src.query.search.cache import SearchCache
 from src.query.search.query_understanding import QueryUnderstanding
 from src.query.search.reranker import get_reranker
@@ -127,25 +131,72 @@ class TimingMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # pylint: disable=redefined-outer-name
     app.state.search_components = {}
+    degraded = []
+
+    # Initialize components with graceful degradation
     try:
-        app.state.search_components = {
-            "query_understanding": QueryUnderstanding(),
-            "retriever": HybridRetriever(),
-            "reranker": get_reranker(),
-            "cache": SearchCache(),
-        }
-        logger.info("Search v2 singletons initialized")
+        app.state.search_components["query_understanding"] = QueryUnderstanding()
     except Exception as exc:
-        logger.warning(f"Search v2 startup degraded; using lazy init: {exc}")
+        logger.warning(f"QueryUnderstanding init failed (degraded mode): {exc}")
+        degraded.append("query_understanding")
+
+    try:
+        app.state.search_components["retriever"] = HybridRetriever()
+    except Exception as exc:
+        logger.warning(f"HybridRetriever init failed (degraded mode): {exc}")
+        degraded.append("retriever")
+
+    try:
+        app.state.search_components["reranker"] = get_reranker()
+    except Exception as exc:
+        logger.warning(f"Reranker init failed (degraded mode): {exc}")
+        degraded.append("reranker")
+
+    try:
+        app.state.search_components["cache"] = SearchCache()
+    except Exception as exc:
+        logger.warning(f"Cache init failed (degraded mode): {exc}")
+        degraded.append("cache")
+
+    # Store degradation status
+    app.state.degraded_components = degraded
+    if degraded:
+        logger.warning(f"API starting in degraded mode — failed components: {degraded}")
+    else:
+        logger.info("Search v2 singletons initialized — all components healthy")
 
     yield
 
+    # Shutdown: close connections gracefully
     cache = app.state.search_components.get("cache")
     if cache is not None:
         try:
             await cache.redis.aclose()
         except (RuntimeError, ValueError, TypeError) as exc:
             logger.warning(f"Failed to close redis cache cleanly: {exc}")
+
+    # Close NIM client if initialized
+    try:
+        from src.services.llm_client import _nim_client
+        if _nim_client is not None:
+            await _nim_client.close()
+    except Exception:
+        pass
+
+    # Close all dynamic LLM providers
+    try:
+        from src.services.llm.registry import close_all_clients
+        await close_all_clients()
+    except Exception:
+        pass
+
+    # Close LLM router
+    try:
+        from src.services.llm.router import _router
+        if _router is not None:
+            await _router.close()
+    except Exception:
+        pass
 
 
 def setup_logging_with_request_id():
@@ -176,16 +227,43 @@ setup_logging_with_request_id()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+        if origin.strip()
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-User-ID"],
+)
+
+# Rate limiting: 60 req/min default, 10 req/min for search (LLM calls)
+app.add_middleware(
+    RateLimitMiddleware,
+    default_rate=1.0,       # 1 request per second (60/min)
+    default_capacity=10,    # burst of 10
+    path_limits={
+        "/search": (0.167, 5),        # ~10/min, burst 5 (LLM calls are expensive)
+        "/deep-insights": (0.083, 3), # ~5/min, burst 3
+        "/reports": (0.167, 5),       # ~10/min, burst 5
+    },
+    excluded_paths={"/health", "/health/detailed", "/health/ready", "/metrics", "/docs", "/openapi.json"},
 )
 
 
 @app.get("/health")
 async def health():
-    """Basic health check endpoint."""
-    return {"status": "ok", "service": "openinsight-api"}
+    """Basic health check endpoint with degradation status."""
+    degraded = getattr(app.state, "degraded_components", [])
+    status = "ok" if not degraded else "degraded"
+    result = {
+        "status": status,
+        "service": "openinsight-api",
+    }
+    if degraded:
+        result["degraded_components"] = degraded
+        result["message"] = f"Running with degraded components: {', '.join(degraded)}"
+    return result
 
 
 @app.get("/health/detailed")
@@ -252,3 +330,5 @@ app.include_router(search_router.router, prefix="/search", tags=["Search"])
 app.include_router(
     deep_insights_router.router, prefix="/deep-insights", tags=["DeepInsights"]
 )
+app.include_router(vault_router.router, prefix="/vault", tags=["Vault"])
+app.include_router(reports_router.router, prefix="/reports", tags=["Reports"])

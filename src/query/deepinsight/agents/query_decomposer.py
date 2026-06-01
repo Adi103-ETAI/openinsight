@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
-import httpx
 from loguru import logger
 
 from src.config.settings import get_settings
+from src.services.llm.registry import get_llm_client
 
 
 @dataclass
@@ -70,7 +70,7 @@ Only output valid JSON:"""
 
     def __init__(self):
         self.settings = get_settings()
-        self._client: Optional[httpx.AsyncClient] = None
+        self._llm = get_llm_client(self.settings.llm_decompose_provider or None)
 
     async def decompose(
         self,
@@ -100,17 +100,8 @@ Only output valid JSON:"""
         entities: dict[str, list[str]],
     ) -> Optional[DecompositionResult]:
         """Use LLM for intelligent decomposition."""
-        if not self._client:
-            self._client = httpx.AsyncClient(timeout=20.0)
-
-        url = f"{self.settings.nvidia_nim_base_url.rstrip('/')}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if self.settings.nvidia_nim_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.nvidia_nim_api_key}"
-
-        body = {
-            "model": self.settings.nim_model,
-            "messages": [
+        content = await self._llm.chat_completions(
+            messages=[
                 {
                     "role": "system",
                     "content": "You are a medical query decomposition expert. Output valid JSON only.",
@@ -124,24 +115,13 @@ Only output valid JSON:"""
                     ),
                 },
             ],
-            "temperature": 0.2,
-            "max_tokens": 500,
-        }
+            temperature=0.2,
+            max_tokens=500,
+        )
 
-        try:
-            response = await self._client.post(url, headers=headers, json=body)
-            response.raise_for_status()
-        except Exception as e:
-            logger.warning(f"LLM decompose HTTP request failed: {e}")
+        if not content:
+            logger.warning("LLM decompose returned empty response")
             return None
-
-        try:
-            data = response.json()
-        except Exception as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
-            return None
-
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
 
         import json
 
@@ -252,5 +232,4 @@ Only output valid JSON:"""
         )
 
     async def close(self):
-        if self._client:
-            await self._client.aclose()
+        pass  # LLM client lifecycle managed by registry

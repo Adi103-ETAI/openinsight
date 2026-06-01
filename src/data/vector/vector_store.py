@@ -13,7 +13,10 @@ from src.vectorstore.filters import FilterCondition, FilterExpression, FilterOpe
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector, VectorPoint
 
-settings = get_settings()
+
+def _get_settings():
+    """Lazy settings access to avoid import-time failures when .env is missing."""
+    return get_settings()
 
 
 @dataclass
@@ -29,13 +32,13 @@ def ensure_collection(
     store = get_vector_store()
     store.ensure_collection(
         recreate=recreate,
-        collection_name=collection_name or settings.vector_collection,
+        collection_name=collection_name or _get_settings().vector_collection,
     )
 
 
 def drop_collection(*, collection_name: str | None = None) -> None:
     store = get_vector_store()
-    store.drop_collection(collection_name=collection_name or settings.vector_collection)
+    store.drop_collection(collection_name=collection_name or _get_settings().vector_collection)
 
 
 def upsert_chunks(
@@ -51,7 +54,7 @@ def upsert_chunks(
     store = get_vector_store()
     return store.upsert_points(
         vector_points,
-        collection_name=collection_name or settings.vector_collection,
+        collection_name=collection_name or _get_settings().vector_collection,
         batch_size=batch_size,
     )
 
@@ -67,7 +70,7 @@ def search(
         query_vector,
         top_k=max(1, top_k),
         filters=filters,
-        collection_name=settings.vector_collection,
+        collection_name=_get_settings().vector_collection,
     )
     return [_to_legacy(hit) for hit in dense_results]
 
@@ -78,13 +81,17 @@ def build_sparse_vector(text: str) -> dict[int, float]:
     Maps term hash → frequency. Used for BM25-style keyword search.
     Uses same vocabulary size as embedder_v2 for consistency.
     """
+    import hashlib
     import re
     from collections import Counter
 
     tokens = re.findall(r"\b[a-zA-Z0-9]{2,}\b", text.lower())
     tf = Counter(tokens)
-    vocab_size = settings.sparse_vocab_size
-    return {abs(hash(term)) % vocab_size: float(freq) for term, freq in tf.items()}
+    vocab_size = _get_settings().sparse_vocab_size
+    return {
+        int.from_bytes(hashlib.md5(term.encode()).digest()[:4], "big") % vocab_size: float(freq)
+        for term, freq in tf.items()
+    }
 
 
 def hybrid_search(
@@ -100,7 +107,7 @@ def hybrid_search(
         query_vector,
         top_k=max(1, top_k),
         filters=filters,
-        collection_name=settings.vector_collection,
+        collection_name=_get_settings().vector_collection,
     )
 
     sparse_mapping = build_sparse_vector(query_text)
@@ -108,7 +115,7 @@ def hybrid_search(
         SparseVector.from_mapping(sparse_mapping),
         top_k=max(1, top_k),
         filters=filters,
-        collection_name=settings.vector_collection,
+        collection_name=_get_settings().vector_collection,
     )
 
     combined = _rrf_merge(dense_results, sparse_results, top_k=max(1, top_k))

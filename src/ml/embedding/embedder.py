@@ -348,6 +348,17 @@ class CohereEmbedder(BaseEmbedder):
         self._dim = 1024  # Cohere embed-english-v3.0 outputs 1024d
         self._api_key = api_key
         self._model = model
+
+        # Validate dimension matches Milvus schema to fail fast
+        if self._dim != settings.embedding_dim:
+            raise ValueError(
+                f"Cohere embedding dimension ({self._dim}) does not match "
+                f"configured embedding_dim ({settings.embedding_dim}) and "
+                f"vector_dim in Milvus schema. Either: "
+                f"(1) set embedding_dim={self._dim} in your .env/config, or "
+                f"(2) use a Cohere model that outputs {settings.embedding_dim}d vectors, or "
+                f"(3) use a different embed_provider (local/huggingface)."
+            )
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

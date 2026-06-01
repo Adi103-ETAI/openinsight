@@ -13,9 +13,11 @@ from uuid import uuid4
 from loguru import logger
 
 from src.config.settings import get_settings
-from src.ml.chunking.chunker import HierarchicalChunkerV3
+from src.ml.chunking.chunker import ChunkV3, HierarchicalChunkerV3
 from src.ingestion.checkpoint import CheckpointManager
 from src.ingestion.dedupe import DocumentDeduplicator
+from src.ingestion.document_db import ChunkRecord, DocumentRecord
+from src.ingestion.validation import validate_chunk, validate_document
 from src.ml.embedding.embedder import BaseEmbedder, create_embedder
 from src.ingestion.metadata import MetadataEnricherV2
 from src.data.mongo.doc_store import MongoDocStoreV2
@@ -100,6 +102,32 @@ class IngestionPipeline:
         self.checkpoint = CheckpointManager(
             mongo_url=self.settings.mongodb_url,
             db_name=self.settings.mongodb_db,
+        )
+
+    @staticmethod
+    def _to_document_record(doc: dict[str, Any], source: str) -> DocumentRecord:
+        """Convert pipeline dict to DocumentRecord for validation."""
+        return DocumentRecord(
+            source_type=doc.get("source_type", source),
+            title=doc.get("title", ""),
+            content=doc.get("content", ""),
+            doi=doc.get("doi"),
+            year=doc.get("year"),
+            journal=doc.get("journal"),
+        )
+
+    @staticmethod
+    def _to_chunk_record(chunk: ChunkV3) -> ChunkRecord:
+        """Convert ChunkV3 to ChunkRecord for validation."""
+        return ChunkRecord(
+            document_id=chunk.doc_id,
+            source_type=chunk.metadata.get("source_type", ""),
+            title=chunk.section_title or "",
+            chunk_text=chunk.text,
+            chunk_index=chunk.chunk_index,
+            char_count=chunk.char_count,
+            token_count=chunk.token_estimate,
+            token_estimate=chunk.token_estimate,
         )
 
     async def _store_to_dead_letter(
@@ -378,6 +406,7 @@ class IngestionPipeline:
             "files_failed": 0,
             "chunks_deduped": 0,
             "chunks_quality_filtered": 0,
+            "chunks_validation_filtered": 0,
         }
 
         if not files:
@@ -440,7 +469,37 @@ class IngestionPipeline:
                 normalized = self._normalize_document(doc, source)
                 enriched = self.metadata.enrich_document(normalized, source)
 
+                # Document-level validation
+                doc_record = self._to_document_record(normalized, source)
+                doc_valid, doc_reason = validate_document(doc_record)
+                if not doc_valid:
+                    logger.warning(
+                        "[pipeline] Document rejected: %s — %s",
+                        normalized.get("title", "")[:60],
+                        doc_reason,
+                    )
+                    continue
+
                 chunks = self.chunker.chunk_document(normalized, enriched)
+                if not chunks:
+                    continue
+
+                # Chunk-level validation
+                validated_chunks = []
+                for chunk in chunks:
+                    chunk_record = self._to_chunk_record(chunk)
+                    chunk_valid, chunk_reason = validate_chunk(chunk_record)
+                    if chunk_valid:
+                        validated_chunks.append(chunk)
+                    else:
+                        logger.debug(
+                            "[pipeline] Chunk rejected: %s — %s",
+                            chunk.chunk_id,
+                            chunk_reason,
+                        )
+                        summary["chunks_validation_filtered"] += 1
+                chunks = validated_chunks
+
                 if not chunks:
                     continue
 
@@ -670,6 +729,7 @@ class IngestionPipeline:
             chunks_created=summary["chunks_created"],
             chunks_embedded=summary["chunks_indexed"],
             chunks_skipped_quality=summary.get("chunks_quality_filtered", 0),
+            chunks_failed_validation=summary.get("chunks_validation_filtered", 0),
         )
         metrics.finish(status="completed")
         await self.monitor.save_run(metrics)

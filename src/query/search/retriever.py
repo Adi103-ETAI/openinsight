@@ -4,11 +4,11 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
 from loguru import logger
 
 from src.config.settings import get_settings
 from src.ml.embedding.embedder import BaseEmbedder, get_embedder
+from src.services.llm_client import get_nim_client
 from src.vectorstore.registry import get_vector_store
 from src.vectorstore.types import ScoredPoint, SparseVector
 
@@ -59,8 +59,11 @@ class HybridRetriever:
         query_analysis: Any,
         top_k: int = 50,
     ) -> tuple[list[RetrievedChunk], list[RetrievedChunk]]:
+        # Use rewritten query for embedding if available, fall back to HYDE or original
         embed_query_text = query
-        if query_analysis.use_hyde:
+        if query_analysis.rewritten_query:
+            embed_query_text = query_analysis.rewritten_query
+        elif query_analysis.use_hyde:
             hyde_text = await self._generate_hyde(query)
             if hyde_text:
                 embed_query_text = hyde_text
@@ -127,28 +130,17 @@ class HybridRetriever:
         if not self.settings.hyde_enabled:
             return None
 
-        url = f"{self.settings.nvidia_nim_base_url.rstrip('/')}/completions"
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self.settings.nvidia_nim_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.nvidia_nim_api_key}"
-
-        body = {
-            "model": self.settings.nim_model,
-            "prompt": f"Write a brief clinical paragraph that answers this query: {query}\n\nAnswer:",
-            "max_tokens": 200,
-            "temperature": 0.1,
-        }
+        prompt = f"Write a brief clinical paragraph that answers this query: {query}\n\nAnswer:"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(url, headers=headers, json=body)
-                response.raise_for_status()
-                data = response.json()
-                choices = data.get("choices", [])
-                if not choices:
-                    return None
-                return (choices[0].get("text") or "").strip() or None
-        except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
+            client = get_nim_client()
+            text = await client.completions(
+                prompt=prompt,
+                temperature=0.1,
+                max_tokens=200,
+            )
+            return text.strip() or None
+        except (RuntimeError, ValueError) as exc:
             logger.warning(f"HYDE generation failed ({exc}), falling back to original query")
             return None
 

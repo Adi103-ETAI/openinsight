@@ -5,8 +5,6 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from src.data.mongo.connection import get_mongo_db
-
 
 class DocumentDeduplicator:
     """
@@ -73,12 +71,7 @@ class DocumentDeduplicator:
 
     async def get_existing_doc_ids(self, source_type: str) -> set[str]:
         """Get all existing doc_ids for a source type."""
-        from src.config.settings import get_settings
-        
-        settings = get_settings()
-        db = get_mongo_db(settings.mongodb_db)
-        
-        cursor = db["documents_v2"].find(
+        cursor = self.mongo.documents.find(
             {"source_type": source_type},
             {"doc_id": 1}
         )

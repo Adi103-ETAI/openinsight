@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
+from loguru import logger
 from src.config.settings import get_settings
 from src.vectorstore.filters import FilterCondition, FilterExpression, FilterOperator
 
@@ -115,6 +117,43 @@ class QueryUnderstanding:
             use_hyde=use_hyde,
             expanded_terms=expanded_terms,
         )
+
+    async def rewrite_query(self, query: str) -> str | None:
+        """
+        LLM-based query rewriting for improved retrieval.
+        Expands abbreviations, adds clinical context, normalizes terminology.
+        Returns rewritten query string, or None on failure.
+        """
+        if not self.settings.nvidia_nim_api_key:
+            return None
+
+        try:
+            from src.services.llm.registry import get_llm_client
+
+            client = get_llm_client(self.settings.llm_rewrite_provider or None)
+
+            prompt = (
+                "Rewrite this clinical query for better medical literature retrieval. "
+                "Expand all abbreviations (HTN->hypertension, DM->diabetes mellitus, "
+                "MI->myocardial infarction, TB->tuberculosis). "
+                "Use formal medical terminology. Preserve original intent.\n"
+                f"Query: {query}\n"
+                "Rewritten query:"
+            )
+
+            rewritten = await client.completions(
+                prompt=prompt,
+                temperature=self.settings.query_rewrite_temperature,
+                max_tokens=self.settings.query_rewrite_max_tokens,
+            )
+
+            if rewritten and rewritten.strip().lower() != query.lower():
+                logger.debug(f"Query rewritten: '{query}' -> '{rewritten.strip()}'")
+                return rewritten.strip()
+            return None
+        except Exception as e:
+            logger.warning(f"LLM query rewrite failed: {e}")
+            return None
 
     def _classify_intent(self, query_lower: str) -> QueryIntent:
         if any(p in query_lower for p in self.DIAGNOSTIC_PATTERNS):

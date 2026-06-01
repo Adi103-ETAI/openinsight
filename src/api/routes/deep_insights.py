@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from loguru import logger
 from pydantic import BaseModel
 from typing import Any, Optional
+from src.query.deepinsight.orchestrator import DeepInsightOrchestrator as DeepInsightsOrchestrator
 
-from src.query.agents.deep_insights import DeepInsightsOrchestrator
-from src.query.agents.intent_router import IntentRouter, QueryComplexity
+from src.query.deepinsight.agents.intent_router import IntentRouter, QueryComplexity
 
 router = APIRouter()
 

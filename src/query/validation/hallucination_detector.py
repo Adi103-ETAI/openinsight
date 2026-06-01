@@ -172,8 +172,8 @@ def detect_hallucinations(
     # Embed all chunks using DualEmbedderV2's embed_batch method
     # Note: DualEmbedderV2 doesn't have an encode method, it uses embed_batch
     chunk_texts = [c.get("chunk_text", "") for c in chunks]
-    chunk_embeddings = model.embed_batch(chunk_texts)
-    sentence_embeddings = model.embed_batch(sentences)
+    chunk_embeddings, _ = model.embed_batch(chunk_texts)
+    sentence_embeddings, _ = model.embed_batch(sentences)
 
     flagged_claims: list[HallucinationFlag] = []
     verified_count = 0

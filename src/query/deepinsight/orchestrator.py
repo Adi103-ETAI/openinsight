@@ -1,0 +1,398 @@
+# BUILT: DeepInsightOrchestrator
+"""
+DeepInsight Orchestrator — Pure orchestrator that calls agents and validators.
+No retrieval logic, no synthesis, no context building inline.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from loguru import logger
+
+from src.config.settings import get_settings
+from src.query.deepinsight.agents.intent_router import IntentRouter, QueryComplexity
+from src.query.deepinsight.agents.query_decomposer import QueryDecomposer
+from src.query.deepinsight.agents.rag_agent import RAGAgent, RAGResult
+from src.query.deepinsight.agents.web_search_agent import WebSearchAgent, WebSearchResult
+from src.query.search.cache import SearchCache
+from src.query.validation.validator import validate_answer
+from src.query.contradiction_detector import ContradictionDetector
+from src.services.llm.router import LLMRouter
+from src.query.deepinsight.agents.skills import get_system_prompt
+
+# Query sanitization (copied from search.py for consistency)
+_DANGEROUS_PATTERNS = re.compile(
+    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|'
+    r'<script|script>|javascript:|on\w+=|'
+    r'\$\{|__|SELECT|UNION|INSERT|UPDATE|DELETE|DROP',
+    re.IGNORECASE,
+)
+_WHITESPACE_PATTERN = re.compile(r'\s+')
+
+
+def _sanitize_query(query: str) -> str:
+    """Sanitize query by removing dangerous patterns and normalizing whitespace."""
+    sanitized = ''.join(c for c in query if ord(c) >= 32 or c in '\n\t')
+    sanitized = _WHITESPACE_PATTERN.sub(' ', sanitized).strip()
+    if _DANGEROUS_PATTERNS.search(sanitized):
+        raise ValueError("Query contains potentially dangerous characters or patterns")
+    return sanitized
+
+
+@dataclass
+class DeepInsightResponse:
+    """Full response from the DeepInsight pipeline."""
+    answer: str = ""
+    citations: list[dict] = field(default_factory=list)
+    sections: dict[str, str] = field(default_factory=dict)
+    validation: dict[str, Any] = field(default_factory=dict)
+    sub_queries: list[str] = field(default_factory=list)
+    contradictions: list[dict] = field(default_factory=list)
+    sources_used: dict[str, list] = field(default_factory=dict)
+    cached: bool = False
+    timed_out: bool = False
+
+
+class DeepInsightOrchestrator:
+    """
+    Pure orchestrator — calls agents and validators, owns the pipeline.
+
+    Pipeline: sanitize → cache check → route → decompose → parallel agents
+              → contradiction detect → synthesize → validate → cache write → respond
+    """
+
+    def __init__(self):
+        self.settings = get_settings()
+        self.intent_router = IntentRouter()
+        self.query_decomposer = QueryDecomposer()
+        self.llm_router = LLMRouter()
+        self.rag_agent = RAGAgent(settings=self.settings, llm_router=self.llm_router)
+        self.web_search_agent = WebSearchAgent(settings=self.settings, llm_router=self.llm_router)
+        self.contradiction_detector = ContradictionDetector()
+        self.cache = SearchCache()
+
+    async def process(self, query: str) -> DeepInsightResponse:
+        """
+        Execute the full DeepInsight pipeline.
+
+        Args:
+            query: Raw user query
+
+        Returns:
+            DeepInsightResponse with all fields populated
+        """
+        # 1. Sanitize query
+        try:
+            sanitized = _sanitize_query(query)
+        except ValueError as e:
+            return DeepInsightResponse(answer=f"Invalid query: {e}")
+
+        # 2. Check top-level cache
+        cache_key = hashlib.sha256(sanitized.lower().encode()).hexdigest()[:16]
+        try:
+            cached = await self.cache.get_search_result(sanitized, None)
+            if cached and "deepinsight" in cached:
+                logger.info(f"[DeepInsight] Cache hit for: {sanitized[:60]}...")
+                resp = DeepInsightResponse(**cached["deepinsight"])
+                resp.cached = True
+                return resp
+        except Exception as e:
+            logger.warning(f"[DeepInsight] Cache read failed: {e}")
+
+        # 3. Route intent
+        routing = self.intent_router.route(sanitized)
+        needs_web = routing.complexity in (QueryComplexity.COMPLEX, QueryComplexity.MEDIUM)
+        logger.info(
+            f"[DeepInsight] Routed: complexity={routing.complexity.value}, "
+            f"intent={routing.detected_intent}, needs_web={needs_web}"
+        )
+
+        # 4. Decompose query
+        decomposition = await self.query_decomposer.decompose(
+            query=sanitized,
+            intent=routing.detected_intent,
+            entities=routing.entities,
+        )
+        sub_query_texts = [sq.query for sq in decomposition.sub_queries]
+        metadata_filters = None  # RoutingDecision doesn't have metadata_filters yet
+
+        # 5. Parallel execution with timeout
+        rag_result: RAGResult | None = None
+        web_result: WebSearchResult | None = None
+
+        try:
+            # Always run RAG
+            rag_coro = self.rag_agent.run(sanitized, sub_query_texts, metadata_filters)
+            rag_result = await asyncio.wait_for(
+                rag_coro, timeout=self.settings.deep_insights_timeout
+            )
+
+            # Run web search if needed or if RAG escalated
+            if needs_web or (rag_result and rag_result.escalate):
+                web_coro = self.web_search_agent.run(sanitized, sanitized)
+                web_result = await asyncio.wait_for(
+                    web_coro, timeout=self.settings.deep_insights_timeout
+                )
+
+        except asyncio.TimeoutError:
+            logger.warning("[DeepInsight] Pipeline timed out")
+            return DeepInsightResponse(
+                answer="Query timed out. Please try a more specific question.",
+                timed_out=True,
+                sub_queries=sub_query_texts,
+            )
+        except Exception as e:
+            logger.error(f"[DeepInsight] Pipeline error: {e}")
+            return DeepInsightResponse(
+                answer=f"Error processing query: {str(e)[:200]}",
+                sub_queries=sub_query_texts,
+            )
+
+        # 6. Contradiction detection
+        contradictions = []
+        if rag_result and web_result and web_result.found:
+            try:
+                chunks_for_contradiction = [
+                    {"text": rag_result.context_used[:2000], "title": "Corpus evidence"},
+                    {"text": web_result.summary[:2000], "title": "Web evidence"},
+                ]
+                report = await self.contradiction_detector.detect(
+                    chunks=chunks_for_contradiction, query=sanitized
+                )
+                if report.has_contradictions:
+                    contradictions = [
+                        {
+                            "type": c.contradiction_type,
+                            "evidence": c.evidence,
+                            "chunk_a_title": c.chunk_a.get("title", ""),
+                            "chunk_b_title": c.chunk_b.get("title", ""),
+                        }
+                        for c in report.contradictions
+                    ]
+            except Exception as e:
+                logger.warning(f"[DeepInsight] Contradiction detection failed: {e}")
+
+        # 7. Synthesis
+        final_answer = ""
+        if rag_result:
+            final_answer = rag_result.answer
+
+        if web_result and web_result.found and rag_result:
+            # Both sources — synthesize via LLM using synthesis skill
+            try:
+                synthesis_prompt = self._build_synthesis_prompt(
+                    sanitized, rag_result, web_result, contradictions
+                )
+                client = self.llm_router.get_client_for_agent("synthesize")
+                synthesis_system = get_system_prompt(
+                    "synthesis_agent",
+                    fallback=(
+                        "You are a medical synthesis agent. Merge corpus-based and "
+                        "web-retrieved evidence into one coherent, cited answer. "
+                        "Flag conflicts explicitly. Do not hallucinate."
+                    ),
+                )
+                synthesized = await client.chat_completions(
+                    messages=[
+                        {"role": "system", "content": synthesis_system},
+                        {"role": "user", "content": synthesis_prompt},
+                    ],
+                    temperature=self.settings.nim_temperature,
+                    max_tokens=2048,
+                )
+                if synthesized:
+                    final_answer = synthesized
+            except Exception as e:
+                logger.warning(f"[DeepInsight] Synthesis LLM failed, using RAG answer: {e}")
+
+        if not final_answer:
+            final_answer = "Unable to generate an answer from available sources."
+
+        # 8. Build citations
+        citations = []
+        if rag_result:
+            citations.extend(rag_result.citations)
+        if web_result and web_result.found:
+            for i, source in enumerate(web_result.sources, len(citations) + 1):
+                citations.append({
+                    "chunk_id": source.get("id", f"web_{i}"),
+                    "mongo_id": "",
+                    "source_type": "web",
+                    "index": i,
+                    "title": source.get("title", ""),
+                    "score": 0.0,
+                    "url": source.get("url", ""),
+                    "tier": source.get("tier", 5),
+                })
+
+        # 9. Section splitting
+        sections = self._split_sections(final_answer)
+
+        # 10. Validation — DO NOT SKIP
+        validation_result = {}
+        try:
+            source_chunks = [
+                {"chunk_text": c.get("excerpt", c.get("title", "")), "title": c.get("title", "")}
+                for c in citations
+            ]
+            # If no chunks from citations, use context from RAG
+            if not source_chunks and rag_result and rag_result.context_used:
+                source_chunks = [{"chunk_text": rag_result.context_used[:1000], "title": "Corpus"}]
+
+            val = await validate_answer(
+                answer=final_answer,
+                citations=citations,
+                source_chunks=source_chunks,
+                verify_citations_in_db=False,
+            )
+            validation_result = {
+                "hallucination_score": val.hallucination_result.hallucination_score if val.hallucination_result else 0.0,
+                "safety_status": "safe" if val.is_safe else "unsafe",
+                "confidence_score": val.confidence_score,
+                "needs_review": val.needs_disclaimer or val.recommendation == "NEEDS_REVIEW",
+                "recommendation": val.recommendation,
+                "safety_warnings": [
+                    {"type": w.warning_type, "severity": w.severity, "message": w.message}
+                    for w in val.safety_warnings
+                ],
+            }
+        except Exception as e:
+            logger.warning(f"[DeepInsight] Validation failed: {e}")
+            validation_result = {"error": str(e)[:200]}
+
+        # 11. Build sources_used
+        sources_used: dict[str, list] = {"corpus": [], "web": []}
+        if rag_result:
+            sources_used["corpus"] = [
+                {"chunk_id": c["chunk_id"], "title": c["title"]}
+                for c in rag_result.citations
+            ]
+        if web_result and web_result.found:
+            sources_used["web"] = [
+                {"url": s.get("url", ""), "title": s.get("title", ""), "tier": s.get("tier", 5)}
+                for s in web_result.sources
+            ]
+
+        response = DeepInsightResponse(
+            answer=final_answer,
+            citations=citations,
+            sections=sections,
+            validation=validation_result,
+            sub_queries=sub_query_texts,
+            contradictions=contradictions,
+            sources_used=sources_used,
+            cached=False,
+            timed_out=False,
+        )
+
+        # 12. Write to cache
+        try:
+            await self.cache.set_search_result(
+                sanitized, None, {"deepinsight": {
+                    "answer": response.answer,
+                    "citations": response.citations,
+                    "sections": response.sections,
+                    "validation": response.validation,
+                    "sub_queries": response.sub_queries,
+                    "contradictions": response.contradictions,
+                    "sources_used": response.sources_used,
+                    "cached": False,
+                    "timed_out": False,
+                }}
+            )
+        except Exception as e:
+            logger.warning(f"[DeepInsight] Cache write failed: {e}")
+
+        return response
+
+    def _build_synthesis_prompt(
+        self,
+        query: str,
+        rag_result: RAGResult,
+        web_result: WebSearchResult,
+        contradictions: list[dict],
+    ) -> str:
+        """Build prompt for merging RAG + web results."""
+        parts = [
+            f"Original Query: {query}",
+            "",
+            "=== CORPUS ANSWER ===",
+            rag_result.answer,
+            "",
+            "=== WEB SEARCH RESULTS ===",
+            web_result.summary,
+            "",
+        ]
+
+        if web_result.sources:
+            parts.append("Web Sources:")
+            for i, s in enumerate(web_result.sources, 1):
+                parts.append(f"  [{i}] {s.get('title', '')} — {s.get('url', '')} ({s.get('date', '')})")
+            parts.append("")
+
+        if contradictions:
+            parts.append("=== CONFLICTS DETECTED ===")
+            for c in contradictions:
+                parts.append(f"  - {c.get('type', 'unknown')}: {c.get('evidence', '')}")
+            parts.append("")
+
+        if rag_result.escalate:
+            parts.append(f"Note: RAG agent escalated — {rag_result.escalate_reason}")
+
+        parts.extend([
+            "",
+            "TASK: Merge the corpus answer and web search results into one coherent answer.",
+            "- Use inline citations: [CHUNK_ID] for corpus, [WEB_n] for web sources",
+            "- If corpus and web conflict, state both with the conflict explicitly noted",
+            "- Lead with the most clinically actionable information",
+            "- If web sources are more recent, prioritize them",
+        ])
+
+        return "\n".join(parts)
+
+    def _split_sections(self, answer: str) -> dict[str, str]:
+        """Parse answer into clinical sections."""
+        sections: dict[str, str] = {}
+
+        # Try to find named sections
+        section_markers = [
+            "Diagnosis", "Treatment", "Dosage", "Monitoring",
+            "Recommendation", "Summary", "Limitations", "Key Findings",
+            "Protocol", "Contraindications", "Side Effects",
+        ]
+
+        current_section = "summary"
+        current_lines: list[str] = []
+
+        for line in answer.split("\n"):
+            stripped = line.strip()
+            matched = False
+            for marker in section_markers:
+                if stripped.lower().startswith(marker.lower() + ":"):
+                    if current_lines:
+                        sections[current_section] = "\n".join(current_lines).strip()
+                    current_section = marker.lower().replace(" ", "_")
+                    current_lines = []
+                    matched = True
+                    break
+            if not matched:
+                current_lines.append(line)
+
+        if current_lines:
+            sections[current_section] = "\n".join(current_lines).strip()
+
+        # Fallback: split on double newlines if no sections found
+        if not sections or (len(sections) == 1 and "summary" in sections):
+            paragraphs = [p.strip() for p in answer.split("\n\n") if p.strip()]
+            if len(paragraphs) > 1:
+                sections = {f"paragraph_{i+1}": p for i, p in enumerate(paragraphs[:5])}
+                sections["full_answer"] = answer
+            else:
+                sections["full_answer"] = answer
+
+        return sections

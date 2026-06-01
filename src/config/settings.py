@@ -83,11 +83,38 @@ class Settings(BaseSettings):
     )
 
     # ===================== LLM =====================
+    # Default provider — must match a key in src/services/llm/providers.json
+    # Available: nvidia, openai, anthropic, google, together, openrouter, groq, aiml, cohere, ollama
+    llm_default_provider: str = "nvidia"
+
+    # Legacy fields (backward compat — providers.json is the source of truth)
     nvidia_nim_api_key: str = ""
     nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     nim_model: str = "meta/llama-3.1-70b-instruct"
     nim_temperature: float = 0.1
     nim_max_tokens: int = 1024
+    nvidia_nim_model: str = "meta/llama-3.1-70b-instruct"
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o"
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1:70b"
+
+    # New provider API keys (env vars are primary source, these are fallbacks)
+    google_api_key: str = ""
+    together_api_key: str = ""
+    openrouter_api_key: str = ""
+    groq_api_key: str = ""
+    aiml_api_key: str = ""
+
+    # Agent → provider mapping (roles: decompose, synthesize, validate, rewrite)
+    llm_decompose_provider: str = ""    # empty = use default
+    llm_synthesize_provider: str = ""   # empty = use default
+    llm_validate_provider: str = ""     # empty = use default
+    llm_rewrite_provider: str = ""      # empty = use default
 
     # ===================== MongoDB =====================
     mongodb_url: str = "mongodb://localhost:27017"
@@ -245,13 +272,6 @@ class Settings(BaseSettings):
     chunk_max_tokens: int = 500
     chunk_overlap_tokens: int = 50
     chunk_min_tokens: int = 80
-
-    # ===================== Scheduler =====================
-    scheduler_pubmed_cron: str = "0 2 * * 0"
-    scheduler_who_cron: str = "0 3 1 * *"
-    scheduler_cdc_cron: str = "0 4 1 * *"
-    scheduler_cochrane_cron: str = "0 5 1 * *"
-    scheduler_enabled: bool = True
 
     # ===================== Hallucination Detection =====================
     hallucination_enabled: bool = True

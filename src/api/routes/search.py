@@ -59,6 +59,14 @@ class SearchRequest(BaseModel):
         le=50,
         description="Number of results to return (1-50)"
     )
+    save_to_vault: bool = Field(
+        default=False,
+        description="Auto-save search results to vault"
+    )
+    vault_tags: list[str] = Field(
+        default_factory=list,
+        description="Tags to apply when saving to vault"
+    )
 
     @field_validator('query')
     @classmethod
@@ -185,6 +193,16 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     cache: SearchCache = await _get_or_create_component(request, "cache")
 
     analysis = query_understanding.analyze(query)
+
+    # LLM-based query rewriting for improved retrieval
+    if settings.llm_query_rewrite:
+        try:
+            rewritten = await query_understanding.rewrite_query(query)
+            if rewritten:
+                analysis.rewritten_query = rewritten
+        except Exception as exc:
+            logger.warning(f"Query rewrite failed (using original): {exc}")
+
     # Convert FilterExpression to dict for cache serialization
     filters = analysis.metadata_filters
     filters_dict = None
@@ -192,7 +210,14 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         filters_dict = filters.model_dump()
     elif filters is not None and hasattr(filters, "__dict__"):
         filters_dict = dict(filters.__dict__) if not isinstance(filters, (str, int, float, bool, type(None))) else None
-    cached = await cache.get_search_result(query, filters_dict if filters_dict is not None else filters)
+
+    # Cache lookup — failure should not break search
+    cached = None
+    try:
+        cached = await cache.get_search_result(query, filters_dict if filters_dict is not None else filters)
+    except Exception as exc:
+        logger.warning(f"Cache read failed (proceeding without cache): {exc}")
+
     if cached:
         cached["cache_hit"] = True
         return SearchResponse(**cached)
@@ -217,11 +242,16 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         top_n=settings.top_k_after_fusion,
     )
 
-    reranked = reranker.rerank(
-        query,
-        fused,
-        top_k=min(settings.top_k_after_rerank, len(fused)) if fused else 0,
-    )
+    # Reranking — failure should fall back to fused results
+    try:
+        reranked = reranker.rerank(
+            query,
+            fused,
+            top_k=min(settings.top_k_after_rerank, len(fused)) if fused else 0,
+        )
+    except Exception as exc:
+        logger.warning(f"Reranking failed (using fusion results): {exc}")
+        reranked = fused
 
     final_k = max(1, payload.top_k)
     final_chunks = maximal_marginal_relevance(
@@ -307,5 +337,41 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
     }
     response = enhance_response(base_response, validation)
 
-    await cache.set_search_result(query, filters_dict if filters_dict is not None else filters, response)
+    # Save to vault if requested
+    if payload.save_to_vault:
+        try:
+            from src.data.mongo.vault_store import VaultStore
+
+            vault_store = getattr(request.app.state, "vault_store", None)
+            if vault_store is None:
+                vault_store = VaultStore(
+                    mongo_url=settings.mongodb_url,
+                    db_name=settings.mongodb_db,
+                )
+                request.app.state.vault_store = vault_store
+
+            user_id = request.headers.get("X-User-ID", "default_user")
+            vault_item = await vault_store.create_item(
+                user_id=user_id,
+                item_type="search_result",
+                title=f"Search: {query[:100]}",
+                content=answer,
+                metadata={
+                    "query": query,
+                    "query_intent": response.get("query_intent", "general"),
+                    "chunks_retrieved": response.get("chunks_retrieved", 0),
+                    "confidence_score": response.get("confidence_score", 0),
+                },
+                tags=payload.vault_tags,
+            )
+            response["vault_item_id"] = vault_item["_id"]
+        except Exception as e:
+            logger.warning(f"Failed to save search result to vault: {e}")
+
+    # Cache write — failure should not break the response
+    try:
+        await cache.set_search_result(query, filters_dict if filters_dict is not None else filters, response)
+    except Exception as exc:
+        logger.warning(f"Cache write failed (response still returned): {exc}")
+
     return SearchResponse(**response)

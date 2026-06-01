@@ -1,0 +1,182 @@
+{
+  "_comment": "LLM Provider configs — add/edit providers here. No Python code changes needed.",
+  "_browser": {
+    "_comment": "Browser automation config",
+    "cdp_browser_url": "",
+    "lightpanda_port": 9222,
+    "agent_browser_path": ""
+  },
+
+  "providers": {
+    "nvidia": {
+      "display_name": "NVIDIA NIM",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_NIM_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "meta/llama-3.1-70b-instruct",
+      "timeout": 60,
+      "models": {
+        "meta/llama-3.1-70b-instruct": { "display_name": "Llama 3.1 70B", "max_tokens": 128000 },
+        "meta/llama-3.1-8b-instruct": { "display_name": "Llama 3.1 8B", "max_tokens": 128000 },
+        "meta/llama-3.3-70b-instruct": { "display_name": "Llama 3.3 70B", "max_tokens": 128000 },
+        "mistralai/mixtral-8x22b-instruct-v0.1": { "display_name": "Mixtral 8x22B", "max_tokens": 65536 },
+        "mistralai/mistral-large-2-instruct": { "display_name": "Mistral Large 2", "max_tokens": 128000 },
+        "google/gemma-2-27b-it": { "display_name": "Gemma 2 27B", "max_tokens": 8192 }
+      }
+    },
+
+    "openai": {
+      "display_name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "gpt-4o",
+      "timeout": 60,
+      "models": {
+        "gpt-4o": { "display_name": "GPT-4o", "max_tokens": 128000 },
+        "gpt-4o-mini": { "display_name": "GPT-4o Mini", "max_tokens": 128000 },
+        "gpt-4-turbo": { "display_name": "GPT-4 Turbo", "max_tokens": 128000 },
+        "gpt-3.5-turbo": { "display_name": "GPT-3.5 Turbo", "max_tokens": 16385 },
+        "o1": { "display_name": "o1", "max_tokens": 200000 },
+        "o1-mini": { "display_name": "o1 Mini", "max_tokens": 128000 }
+      }
+    },
+
+    "anthropic": {
+      "display_name": "Anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "auth_type": "x-api-key",
+      "api_type": "anthropic",
+      "default_model": "claude-sonnet-4-20250514",
+      "timeout": 60,
+      "models": {
+        "claude-sonnet-4-20250514": { "display_name": "Claude Sonnet 4", "max_tokens": 200000 },
+        "claude-3-5-haiku-20241022": { "display_name": "Claude 3.5 Haiku", "max_tokens": 200000 },
+        "claude-3-5-sonnet-20241022": { "display_name": "Claude 3.5 Sonnet", "max_tokens": 200000 },
+        "claude-3-opus-20240229": { "display_name": "Claude 3 Opus", "max_tokens": 200000 }
+      }
+    },
+
+    "google": {
+      "display_name": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "api_key_env": "GOOGLE_API_KEY",
+      "auth_type": "query_param",
+      "api_type": "google",
+      "default_model": "gemini-2.0-flash",
+      "timeout": 60,
+      "models": {
+        "gemini-2.0-flash": { "display_name": "Gemini 2.0 Flash", "max_tokens": 1048576 },
+        "gemini-2.0-flash-lite": { "display_name": "Gemini 2.0 Flash Lite", "max_tokens": 1048576 },
+        "gemini-1.5-pro": { "display_name": "Gemini 1.5 Pro", "max_tokens": 2097152 },
+        "gemini-1.5-flash": { "display_name": "Gemini 1.5 Flash", "max_tokens": 1048576 }
+      }
+    },
+
+    "together": {
+      "display_name": "Together AI",
+      "base_url": "https://api.together.xyz/v1",
+      "api_key_env": "TOGETHER_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "timeout": 60,
+      "models": {
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": { "display_name": "Llama 3.3 70B Turbo", "max_tokens": 131072 },
+        "meta-llama/Llama-3.1-405B-Instruct-Turbo": { "display_name": "Llama 3.1 405B Turbo", "max_tokens": 131072 },
+        "meta-llama/Llama-3.1-70B-Instruct-Turbo": { "display_name": "Llama 3.1 70B Turbo", "max_tokens": 131072 },
+        "mistralai/Mixtral-8x22B-Instruct-v0.1": { "display_name": "Mixtral 8x22B", "max_tokens": 65536 },
+        "Qwen/Qwen2.5-72B-Instruct-Turbo": { "display_name": "Qwen 2.5 72B Turbo", "max_tokens": 32768 },
+        "deepseek-ai/DeepSeek-V3": { "display_name": "DeepSeek V3", "max_tokens": 65536 }
+      }
+    },
+
+    "openrouter": {
+      "display_name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "meta-llama/llama-3.3-70b-instruct",
+      "timeout": 60,
+      "models": {
+        "meta-llama/llama-3.3-70b-instruct": { "display_name": "Llama 3.3 70B", "max_tokens": 131072 },
+        "anthropic/claude-sonnet-4": { "display_name": "Claude Sonnet 4", "max_tokens": 200000 },
+        "openai/gpt-4o": { "display_name": "GPT-4o", "max_tokens": 128000 },
+        "google/gemini-2.0-flash": { "display_name": "Gemini 2.0 Flash", "max_tokens": 1048576 },
+        "deepseek/deepseek-chat": { "display_name": "DeepSeek Chat", "max_tokens": 65536 },
+        "qwen/qwen-2.5-72b-instruct": { "display_name": "Qwen 2.5 72B", "max_tokens": 32768 }
+      }
+    },
+
+    "groq": {
+      "display_name": "Groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "llama-3.3-70b-versatile",
+      "timeout": 30,
+      "models": {
+        "llama-3.3-70b-versatile": { "display_name": "Llama 3.3 70B", "max_tokens": 131072 },
+        "llama-3.1-8b-instant": { "display_name": "Llama 3.1 8B Instant", "max_tokens": 131072 },
+        "gemma2-9b-it": { "display_name": "Gemma 2 9B", "max_tokens": 8192 },
+        "mixtral-8x7b-32768": { "display_name": "Mixtral 8x7B", "max_tokens": 32768 },
+        "deepseek-r1-distill-llama-70b": { "display_name": "DeepSeek R1 70B", "max_tokens": 131072 }
+      }
+    },
+
+    "aiml": {
+      "display_name": "AIML API",
+      "base_url": "https://api.aimlapi.com/v1",
+      "api_key_env": "AIML_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "openai",
+      "default_model": "meta-llama/llama-3.1-70b-instruct",
+      "timeout": 60,
+      "models": {
+        "meta-llama/llama-3.1-70b-instruct": { "display_name": "Llama 3.1 70B", "max_tokens": 131072 },
+        "openai/gpt-4o": { "display_name": "GPT-4o", "max_tokens": 128000 },
+        "anthropic/claude-3.5-sonnet": { "display_name": "Claude 3.5 Sonnet", "max_tokens": 200000 },
+        "google/gemini-2.0-flash": { "display_name": "Gemini 2.0 Flash", "max_tokens": 1048576 },
+        "mistralai/mistral-large": { "display_name": "Mistral Large", "max_tokens": 128000 }
+      }
+    },
+
+    "cohere": {
+      "display_name": "Cohere",
+      "base_url": "https://api.cohere.com/v2",
+      "api_key_env": "COHERE_API_KEY",
+      "auth_type": "bearer",
+      "api_type": "cohere",
+      "default_model": "command-r-plus",
+      "timeout": 60,
+      "models": {
+        "command-r-plus": { "display_name": "Command R+", "max_tokens": 128000 },
+        "command-r": { "display_name": "Command R", "max_tokens": 128000 },
+        "command": { "display_name": "Command", "max_tokens": 4096 }
+      }
+    },
+
+    "ollama": {
+      "display_name": "Ollama (Local)",
+      "base_url": "http://localhost:11434",
+      "api_key_env": "",
+      "auth_type": "none",
+      "api_type": "ollama",
+      "default_model": "llama3.1:70b",
+      "timeout": 120,
+      "models": {
+        "llama3.1:70b": { "display_name": "Llama 3.1 70B", "max_tokens": 131072 },
+        "llama3.1:8b": { "display_name": "Llama 3.1 8B", "max_tokens": 131072 },
+        "mistral:7b": { "display_name": "Mistral 7B", "max_tokens": 32768 },
+        "mixtral:8x7b": { "display_name": "Mixtral 8x7B", "max_tokens": 32768 },
+        "qwen2.5:72b": { "display_name": "Qwen 2.5 72B", "max_tokens": 32768 },
+        "deepseek-r1:70b": { "display_name": "DeepSeek R1 70B", "max_tokens": 131072 }
+      }
+    }
+  }
+}

@@ -123,12 +123,6 @@
   "chunk_overlap_tokens": 50,
   "chunk_min_tokens": 80,
 
-  "scheduler_pubmed_cron": "0 2 * * 0",
-  "scheduler_who_cron": "0 3 1 * *",
-  "scheduler_cdc_cron": "0 4 1 * *",
-  "scheduler_cochrane_cron": "0 5 1 * *",
-  "scheduler_enabled": true,
-
   "hallucination_enabled": true,
   "hallucination_threshold": 0.75,
 

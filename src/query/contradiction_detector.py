@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-import torch
 from loguru import logger
 
 from src.config.settings import get_settings
@@ -204,6 +203,8 @@ class ContradictionDetector:
             return "entailment"  # Fallback when no model loaded
 
         try:
+            import torch
+
             model = self._nli_model["model"]
             tokenizer = self._nli_model["tokenizer"]
 
