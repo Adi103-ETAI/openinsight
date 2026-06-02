@@ -129,6 +129,44 @@
 ### Services (`src/services/`)
 - **llm_client.py** - NVIDIA NIM API client
 
+### Tools Package (`src/tools/`)
+
+A shared toolkit of 55 standalone functions used by agents in the DeepInsights pipeline and by the `/search/document` route. Replaces the old `src/query/deepinsight/agents/tools.py` wrapper module.
+
+```
+src/tools/
+├── __init__.py                 # TOOL_REGISTRY, get_tool(), list_tools()
+├── filesystemtools/            # 27 tools / 9 files  — file I/O, hashing, truncation
+├── websearchtools/             # 13 tools / 6 files  — result filtering, dedup, ranking
+├── citationtools/              #  8 tools / 4 files  — citation ID extraction & validation
+└── doctools/                   #  8 tools / 7 files  — PDF/DOCX generation, section building
+```
+
+#### Design Principles
+
+- **One tool = one function in one file.** No wrapper classes, no `__init__` boilerplate.
+- **Explicit parameters only.** Tools do not depend on a hidden `settings` object — they take what they need as args.
+- **Direct imports over registry lookups.** Agents import only the functions they use:
+  ```python
+  from src.tools.filesystemtools.write_file import write_text
+  from src.tools.doctools.generate_pdf import generate_pdf
+  ```
+- **`TOOL_REGISTRY` in `__init__.py`** maps tool name → function for dynamic lookup by the orchestrator and routes:
+  ```python
+  from src.tools import TOOL_REGISTRY, get_tool, list_tools
+
+  self.tools = TOOL_REGISTRY  # orchestrator
+  pdf_tool = get_tool("generate_pdf")
+  ```
+
+#### `aiofiles` Fallback
+
+`aiofiles` is **optional**. Every tool that does I/O tries `import aiofiles` and falls back to stdlib `open()` / `os` calls when it is not installed. No new pip dependency is required for the tools package to work.
+
+#### Why the Old Wrapper Was Removed
+
+The previous `src/query/deepinsight/agents/tools.py` exposed each tool as a class with a `get_tool(settings)` factory. This made call sites verbose, made tests require constructing a wrapper, and made adding a tool a multi-file edit. The function-based layout is greppable, testable in isolation, and makes the dependency graph obvious from import statements.
+
 ---
 
 ## Logging

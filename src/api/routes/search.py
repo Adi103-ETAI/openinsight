@@ -20,6 +20,8 @@ from src.query.search.retriever import HybridRetriever
 import re
 
 from src.services.llm_client import get_nim_client
+from src.tools import generate_pdf, generate_docx, build_doc_sections
+from pathlib import Path
 
 router = APIRouter()
 settings = get_settings()
@@ -375,3 +377,62 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         logger.warning(f"Cache write failed (response still returned): {exc}")
 
     return SearchResponse(**response)
+
+
+class SearchDocRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+    format: str = Field(default="pdf", pattern="^(pdf|docx)$")
+    title: str = Field(default="")
+
+
+@router.post("/document")
+async def search_document_endpoint(payload: SearchDocRequest, request: Request):
+    """
+    Search and return results as a downloadable PDF/DOCX document.
+    """
+    # Run search first
+    search_payload = SearchRequest(query=payload.query, top_k=6)
+    result = await search_endpoint(search_payload, request)
+
+    if not result.answer or result.answer == "No relevant clinical information found in the knowledge base for this query.":
+        raise HTTPException(status_code=404, detail="No results found to generate document")
+
+    # Build document sections
+    sections = build_doc_sections(
+        answer=result.answer,
+        citations=result.citations,
+        title=payload.title or f"Search: {payload.query[:100]}",
+    )
+
+    # Generate document
+    title = payload.title or f"Search_{payload.query[:50]}"
+    try:
+        if payload.format == "pdf":
+            path = generate_pdf(sections, title)
+            if not path:
+                raise HTTPException(status_code=500, detail="PDF generation failed (reportlab not installed)")
+            with open(path, "rb") as f:
+                content = f.read()
+            return Response(
+                content=content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{Path(path).name}"'},
+            )
+        elif payload.format == "docx":
+            path = generate_docx(sections, title)
+            if not path:
+                raise HTTPException(status_code=500, detail="DOCX generation failed (python-docx not installed)")
+            with open(path, "rb") as f:
+                content = f.read()
+            return Response(
+                content=content,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                headers={"Content-Disposition": f'attachment; filename="{Path(path).name}"'},
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Document generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Document generation failed: {str(e)}")
+
+    raise HTTPException(status_code=400, detail=f"Unsupported format: {payload.format}")

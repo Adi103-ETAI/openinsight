@@ -19,11 +19,14 @@ from src.query.deepinsight.agents.intent_router import IntentRouter, QueryComple
 from src.query.deepinsight.agents.query_decomposer import QueryDecomposer
 from src.query.deepinsight.agents.rag_agent import RAGAgent, RAGResult
 from src.query.deepinsight.agents.web_search_agent import WebSearchAgent, WebSearchResult
+from src.query.deepinsight.agents.synthesis_agent import SynthesisAgent, SynthesisResult
+from src.query.deepinsight.agents.citation_validator import CitationValidator, CitationResult
+from src.query.deepinsight.agents.docgen_agent import DocGenAgent, DocGenResult
+from src.tools import TOOL_REGISTRY, get_tool
 from src.query.search.cache import SearchCache
 from src.query.validation.validator import validate_answer
 from src.query.contradiction_detector import ContradictionDetector
 from src.services.llm.router import LLMRouter
-from src.query.deepinsight.agents.skills import get_system_prompt
 
 # Query sanitization (copied from search.py for consistency)
 _DANGEROUS_PATTERNS = re.compile(
@@ -56,6 +59,8 @@ class DeepInsightResponse:
     sources_used: dict[str, list] = field(default_factory=dict)
     cached: bool = False
     timed_out: bool = False
+    synthesis_result: dict = field(default_factory=dict)
+    citation_validation: dict = field(default_factory=dict)
 
 
 class DeepInsightOrchestrator:
@@ -71,8 +76,17 @@ class DeepInsightOrchestrator:
         self.intent_router = IntentRouter()
         self.query_decomposer = QueryDecomposer()
         self.llm_router = LLMRouter()
+        
+        # Initialize agents
         self.rag_agent = RAGAgent(settings=self.settings, llm_router=self.llm_router)
         self.web_search_agent = WebSearchAgent(settings=self.settings, llm_router=self.llm_router)
+        self.synthesis_agent = SynthesisAgent(settings=self.settings, llm_router=self.llm_router)
+        self.citation_validator = CitationValidator(settings=self.settings, llm_router=self.llm_router)
+        self.docgen_agent = DocGenAgent(settings=self.settings, llm_router=self.llm_router)
+        
+        # Initialize tools (function-based registry)
+        self.tools = TOOL_REGISTRY
+        
         self.contradiction_detector = ContradictionDetector()
         self.cache = SearchCache()
 
@@ -177,58 +191,92 @@ class DeepInsightOrchestrator:
             except Exception as e:
                 logger.warning(f"[DeepInsight] Contradiction detection failed: {e}")
 
-        # 7. Synthesis
+        # 7. Synthesis with new agents
         final_answer = ""
-        if rag_result:
-            final_answer = rag_result.answer
-
-        if web_result and web_result.found and rag_result:
-            # Both sources — synthesize via LLM using synthesis skill
+        synthesis_result = None
+        
+        if rag_result and web_result and web_result.found:
+            # Both sources — use synthesis agent
             try:
-                synthesis_prompt = self._build_synthesis_prompt(
-                    sanitized, rag_result, web_result, contradictions
+                synthesis_result = await self.synthesis_agent.run(
+                    original_query=sanitized,
+                    rag_answer=rag_result.answer,
+                    web_context=web_result.summary,
+                    conflict_flag=bool(contradictions),
+                    conflict_detail=str([c.get('evidence', '') for c in contradictions])
                 )
-                client = self.llm_router.get_client_for_agent("synthesize")
-                synthesis_system = get_system_prompt(
-                    "synthesis_agent",
-                    fallback=(
-                        "You are a medical synthesis agent. Merge corpus-based and "
-                        "web-retrieved evidence into one coherent, cited answer. "
-                        "Flag conflicts explicitly. Do not hallucinate."
-                    ),
-                )
-                synthesized = await client.chat_completions(
-                    messages=[
-                        {"role": "system", "content": synthesis_system},
-                        {"role": "user", "content": synthesis_prompt},
-                    ],
-                    temperature=self.settings.nim_temperature,
-                    max_tokens=2048,
-                )
-                if synthesized:
-                    final_answer = synthesized
+                final_answer = synthesis_result.answer
+                logger.info("[DeepInsight] Synthesis agent completed successfully")
             except Exception as e:
-                logger.warning(f"[DeepInsight] Synthesis LLM failed, using RAG answer: {e}")
-
-        if not final_answer:
+                logger.warning(f"[DeepInsight] Synthesis agent failed: {e}")
+                final_answer = rag_result.answer
+        elif rag_result:
+            # Only RAG available
+            final_answer = rag_result.answer
+        else:
+            # No sources
             final_answer = "Unable to generate an answer from available sources."
 
-        # 8. Build citations
-        citations = []
-        if rag_result:
-            citations.extend(rag_result.citations)
-        if web_result and web_result.found:
-            for i, source in enumerate(web_result.sources, len(citations) + 1):
-                citations.append({
-                    "chunk_id": source.get("id", f"web_{i}"),
-                    "mongo_id": "",
-                    "source_type": "web",
-                    "index": i,
-                    "title": source.get("title", ""),
-                    "score": 0.0,
-                    "url": source.get("url", ""),
-                    "tier": source.get("tier", 5),
+        # 8. Citation validation
+        citation_result = None
+        try:
+            # Prepare corpus chunks for citation validation
+            corpus_chunks = []
+            for citation in rag_result.citations if rag_result else []:
+                corpus_chunks.append({
+                    "id": citation["chunk_id"],
+                    "title": citation["title"],
+                    "text": citation.get("excerpt", "")[:1000]  # Use excerpt or truncate
                 })
+            
+            # Prepare web sources for citation validation  
+            web_sources = []
+            if web_result and web_result.found:
+                for i, source in enumerate(web_result.sources):
+                    web_sources.append({
+                        "id": f"WEB_{i+1:03d}",
+                        "title": source.get("title", ""),
+                        "url": source.get("url", ""),
+                        "excerpt": source.get("excerpt", "")[:1000]
+                    })
+            
+            citation_result = await self.citation_validator.run(
+                answer_text=final_answer,
+                corpus_chunks=corpus_chunks,
+                web_sources=web_sources
+            )
+            logger.info("[DeepInsight] Citation validation completed successfully")
+        except Exception as e:
+            logger.warning(f"[DeepInsight] Citation validation failed: {e}")
+            # Fallback: basic citation extraction
+            citation_result = CitationResult(
+                validation_complete=False,
+                hallucination_detected=False,
+                citations=[],
+                flagged_claims=[],
+                summary={"total_claims": 0, "verified": 0, "assigned": 0, "misattributed": 0, "unsupported": 0}
+            )
+
+        # 9. Build citations from validation result
+        citations = []
+        if citation_result and citation_result.citations:
+            citations.extend(citation_result.citations)
+        else:
+            # Fallback to original citations
+            if rag_result:
+                citations.extend(rag_result.citations)
+            if web_result and web_result.found:
+                for i, source in enumerate(web_result.sources, len(citations) + 1):
+                    citations.append({
+                        "chunk_id": source.get("id", f"web_{i}"),
+                        "mongo_id": "",
+                        "source_type": "web",
+                        "index": i,
+                        "title": source.get("title", ""),
+                        "score": 0.0,
+                        "url": source.get("url", ""),
+                        "tier": source.get("tier", 5),
+                    })
 
         # 9. Section splitting
         sections = self._split_sections(final_answer)
@@ -260,23 +308,34 @@ class DeepInsightOrchestrator:
                     {"type": w.warning_type, "severity": w.severity, "message": w.message}
                     for w in val.safety_warnings
                 ],
+                "citation_validation": {
+                    "validation_complete": citation_result.validation_complete if citation_result else False,
+                    "hallucination_detected": citation_result.hallucination_detected if citation_result else False,
+                    "total_claims": citation_result.summary["total_claims"] if citation_result else 0,
+                    "verified_claims": citation_result.summary["verified"] if citation_result else 0,
+                    "flagged_claims": len(citation_result.flagged_claims) if citation_result else 0
+                } if citation_result else {}
             }
         except Exception as e:
             logger.warning(f"[DeepInsight] Validation failed: {e}")
             validation_result = {"error": str(e)[:200]}
 
-        # 11. Build sources_used
+        # 11. Build sources_used from synthesis and validation results
         sources_used: dict[str, list] = {"corpus": [], "web": []}
-        if rag_result:
-            sources_used["corpus"] = [
-                {"chunk_id": c["chunk_id"], "title": c["title"]}
-                for c in rag_result.citations
-            ]
-        if web_result and web_result.found:
-            sources_used["web"] = [
-                {"url": s.get("url", ""), "title": s.get("title", ""), "tier": s.get("tier", 5)}
-                for s in web_result.sources
-            ]
+        if synthesis_result and synthesis_result.sources_used:
+            sources_used = synthesis_result.sources_used
+        else:
+            # Fallback to original sources
+            if rag_result:
+                sources_used["corpus"] = [
+                    {"chunk_id": c["chunk_id"], "title": c["title"]}
+                    for c in rag_result.citations
+                ]
+            if web_result and web_result.found:
+                sources_used["web"] = [
+                    {"url": s.get("url", ""), "title": s.get("title", ""), "tier": s.get("tier", 5)}
+                    for s in web_result.sources
+                ]
 
         response = DeepInsightResponse(
             answer=final_answer,
@@ -288,9 +347,20 @@ class DeepInsightOrchestrator:
             sources_used=sources_used,
             cached=False,
             timed_out=False,
+            synthesis_result={
+                "conflict_resolved": synthesis_result.conflict_resolved if synthesis_result else False,
+                "conflict_note": synthesis_result.conflict_note if synthesis_result else "N/A",
+                "synthesis_confidence": synthesis_result.synthesis_confidence if synthesis_result else "unknown",
+                "synthesis_confidence_reason": synthesis_result.synthesis_confidence_reason if synthesis_result else ""
+            } if synthesis_result else {},
+            citation_validation={
+                "validation_complete": citation_result.validation_complete if citation_result else False,
+                "hallucination_detected": citation_result.hallucination_detected if citation_result else False,
+                "summary": citation_result.summary if citation_result else {}
+            } if citation_result else {}
         )
 
-        # 12. Write to cache
+        # 13. Write to cache
         try:
             await self.cache.set_search_result(
                 sanitized, None, {"deepinsight": {
@@ -303,57 +373,14 @@ class DeepInsightOrchestrator:
                     "sources_used": response.sources_used,
                     "cached": False,
                     "timed_out": False,
+                    "synthesis_result": response.synthesis_result,
+                    "citation_validation": response.citation_validation,
                 }}
             )
         except Exception as e:
             logger.warning(f"[DeepInsight] Cache write failed: {e}")
 
         return response
-
-    def _build_synthesis_prompt(
-        self,
-        query: str,
-        rag_result: RAGResult,
-        web_result: WebSearchResult,
-        contradictions: list[dict],
-    ) -> str:
-        """Build prompt for merging RAG + web results."""
-        parts = [
-            f"Original Query: {query}",
-            "",
-            "=== CORPUS ANSWER ===",
-            rag_result.answer,
-            "",
-            "=== WEB SEARCH RESULTS ===",
-            web_result.summary,
-            "",
-        ]
-
-        if web_result.sources:
-            parts.append("Web Sources:")
-            for i, s in enumerate(web_result.sources, 1):
-                parts.append(f"  [{i}] {s.get('title', '')} — {s.get('url', '')} ({s.get('date', '')})")
-            parts.append("")
-
-        if contradictions:
-            parts.append("=== CONFLICTS DETECTED ===")
-            for c in contradictions:
-                parts.append(f"  - {c.get('type', 'unknown')}: {c.get('evidence', '')}")
-            parts.append("")
-
-        if rag_result.escalate:
-            parts.append(f"Note: RAG agent escalated — {rag_result.escalate_reason}")
-
-        parts.extend([
-            "",
-            "TASK: Merge the corpus answer and web search results into one coherent answer.",
-            "- Use inline citations: [CHUNK_ID] for corpus, [WEB_n] for web sources",
-            "- If corpus and web conflict, state both with the conflict explicitly noted",
-            "- Lead with the most clinically actionable information",
-            "- If web sources are more recent, prioritize them",
-        ])
-
-        return "\n".join(parts)
 
     def _split_sections(self, answer: str) -> dict[str, str]:
         """Parse answer into clinical sections."""
@@ -396,3 +423,54 @@ class DeepInsightOrchestrator:
                 sections["full_answer"] = answer
 
         return sections
+
+    async def generate_document(
+        self, 
+        query: str, 
+        doc_format: str = "pdf", 
+        title: str = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a document from the last query result.
+        
+        Args:
+            query: Original query (for context)
+            doc_format: "pdf" or "docx"
+            title: Optional title for document
+            
+        Returns:
+            Dict with document metadata
+        """
+        # Get cached result if available
+        cache_key = hashlib.sha256(query.lower().encode()).hexdigest()[:16]
+        try:
+            cached = await self.cache.get_search_result(query, None)
+            if cached and "deepinsight" in cached:
+                result = cached["deepinsight"]
+                
+                # Prepare document request
+                doc_request = {
+                    "format": doc_format,
+                    "title": title or f"Summary for: {query[:100]}",
+                    "content": result.get("answer", ""),
+                    "citations": result.get("citations", []),
+                    "patient_context": "",  # Would be filled by UI
+                    "generated_at": datetime.now().isoformat()
+                }
+                
+                # Generate document
+                docgen_result = await self.docgen_agent.run(doc_request)
+                
+                return {
+                    "file_path": docgen_result.file_path,
+                    "format": docgen_result.format,
+                    "page_count": docgen_result.page_count,
+                    "size_bytes": docgen_result.size_bytes,
+                    "title": docgen_result.title,
+                    "generated_at": docgen_result.generated_at
+                }
+        except Exception as e:
+            logger.error(f"[DeepInsight] Document generation failed: {e}")
+            return {"error": str(e)}
+        
+        return {"error": "No cached result found for document generation"}

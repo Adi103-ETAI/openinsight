@@ -160,6 +160,54 @@ Use DeepInsights for complex clinical queries that require:
 
 ---
 
+## Agent Tools
+
+The pipeline now runs **5 agents** (RAG, Web Search, Synthesis, Citation Validator, DocGen). All of them share a common toolbelt exposed by `src/tools/`, plus the orchestrator binds the full registry as `self.tools = TOOL_REGISTRY` for dynamic lookup.
+
+### Agent → Tool Mapping
+
+| Agent | Filesystem | Web Search | Citation | Doc |
+|-------|:---:|:---:|:---:|:---:|
+| RAG Agent | `save_chunk`, `load_chunk`, `hash_string`, `cache_key` | — | `extract_chunk_ids` | — |
+| Web Search Agent | `write_text`, `write_json` (cache results) | `extract_domain`, `is_medical_domain`, `filter_medical`, `rank_by_keywords`, `top_n`, `deduplicate_by_url`, `deduplicate_by_title`, `group_by_domain` | `extract_web_ids` | — |
+| Synthesis Agent | — | — | `extract_all_citations`, `extract_citation_markers` | — |
+| Citation Validator | — | — | `claim_supported_by_source`, `is_supported`, `find_best_source`, `build_citation_schema` | — |
+| DocGen Agent | `make_reports_dir`, `generate_filename`, `cleanup_temp_files` | — | `format_citations_inline`, `count_citations` | `split_sections`, `build_doc_sections`, `generate_pdf`, `generate_docx`, `get_pdf_metadata` |
+
+### Tool Access Pattern
+
+Agents import only what they need (preferred — explicit, greppable):
+
+```python
+from src.tools.doctools.generate_pdf import generate_pdf
+from src.tools.citationtools.build_citation_schema import build_citation_schema
+```
+
+The orchestrator and routes use the central registry for dynamic lookup:
+
+```python
+from src.tools import TOOL_REGISTRY, get_tool, list_tools
+
+# orchestrator.py
+self.tools = TOOL_REGISTRY
+
+# api/routes/search.py
+build_sections = get_tool("build_doc_sections")
+render = get_tool("generate_pdf")  # or "generate_docx"
+```
+
+### `POST /search/document` — Document Export Outside the DeepInsights Flow
+
+The standard `/search` endpoint returns JSON. The new `/search/document` endpoint runs the same search, then:
+
+1. `build_doc_sections()` structures the answer into sections
+2. `generate_pdf()` or `generate_docx()` (chosen by the request) renders the file
+3. Returns the file as a streaming download
+
+This means a basic RAG search can now produce a downloadable clinical report without going through the full multi-agent DeepInsights pipeline.
+
+---
+
 ## Intent Router Logic
 
 ```python

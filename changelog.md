@@ -1,5 +1,142 @@
 # OpenInsight Changelog
 
+## v2.1.0 - New Agents & Tools Refactor (2026-06-02)
+
+### 🤖 New Agents
+
+#### **Synthesis Agent** (`src/query/deepinsight/agents/synthesis_agent.py`)
+- **RAG + Web Merger**: Combines corpus and web results into a single coherent answer
+- **Conflict Resolution**: Explicitly surfaces contradictions between sources (corpus vs. latest guidelines) instead of silently picking one
+- **Conditional Activation**: Only runs when BOTH RAG and Web Search fire — RAG-only or Web-only paths skip synthesis entirely and use the raw output
+- **Rationale**: Previously, web results were appended to RAG output without deduplication or conflict tagging, leading to noisy or contradictory answers for guideline-comparison queries
+
+#### **Citation Validator** (`src/query/deepinsight/agents/citation_validator.py`)
+- **Post-Generation Mapping**: After synthesis, validates every claim in the answer against the original source chunks / web results
+- **Schema Output**: Emits a machine-readable citation schema (claim → supporting source IDs, confidence, support level) consumed by the UI for tooltips and the "show sources" panel
+- **Flags Misattribution**: Detects claims that cite `[C3]` but the supporting evidence is actually in `C7` (or unsupported entirely)
+- **Rationale**: LLMs frequently hallucinate citation IDs; this is the safety net before the answer reaches the clinician
+
+#### **DocGen Agent** (`src/query/deepinsight/agents/docgen_agent.py`)
+- **Format Conversion**: Converts synthesis output into PDF (reportlab) or DOCX (python-docx)
+- **No Content Regeneration**: Renders exactly what synthesis produced — does not call an LLM, so it cannot introduce new errors
+- **Rationale**: Splits the "what to say" (synthesis) from the "how to render it" (DocGen); previously the renderer lived inline in the orchestrator and was hard to test
+
+### 🛠️ Tools Package — `src/tools/` (replaces `src/query/deepinsight/agents/tools.py`)
+
+The old `agents/tools.py` was a single module of wrapper classes with a `get_tool(settings)` factory. It has been **replaced** by a package of standalone functions, one tool per file, with a central registry. **Backward compatible** — all agents can still import any individual tool directly.
+
+#### **Total: 55 tools across 4 subpackages**
+
+| Subpackage | Tools | Files | Purpose |
+|------------|------:|------:|---------|
+| `filesystemtools/` | 27 | 9 | Read/write/edit/list/hash/truncate file operations |
+| `websearchtools/` | 13 | 6 | Domain extraction, snippet extraction, medical filtering, ranking, dedup |
+| `citationtools/` | 8 | 4 | Citation ID extraction, claim validation, schema building, source matching |
+| `doctools/` | 8 | 7 | PDF/DOCX generation, section splitting, citation formatting, filename generation |
+
+#### **Layout**
+
+```
+src/tools/
+├── __init__.py                            # TOOL_REGISTRY, get_tool(), list_tools()
+│
+├── filesystemtools/                       # 27 tools / 9 files
+│   ├── write_file.py                      # write_text, write_json, write_bytes
+│   ├── read_file.py                       # read_text, read_json, read_bytes
+│   ├── edit_file.py                       # append_to_file, replace_in_file, insert_at_line
+│   ├── delete_file.py                     # delete_file, delete_directory, cleanup_temp_files
+│   ├── list_files.py                      # list_files, list_by_extension, get_file_size, get_file_info
+│   ├── make_directory.py                  # make_dir, make_temp_dir, make_reports_dir
+│   ├── hash_text.py                       # hash_string, hash_file, cache_key
+│   ├── truncate_text.py                   # truncate, truncate_to_tokens_approx
+│   └── save_chunk.py                      # save_chunk, load_chunk
+│
+├── websearchtools/                        # 13 tools / 6 files
+│   ├── extract_domain.py                  # extract_domain, is_same_domain
+│   ├── extract_snippet.py                 # extract_snippet, extract_text_blocks
+│   ├── filter_medical.py                  # is_medical_domain, filter_medical, list_medical_domains
+│   ├── rank_results.py                    # rank_by_keywords, top_n
+│   ├── group_by_domain.py                 # group_by_domain, count_per_domain
+│   └── deduplicate.py                     # deduplicate_by_url, deduplicate_by_title
+│
+├── citationtools/                         # 8 tools / 4 files
+│   ├── extract_citations.py               # extract_chunk_ids, extract_web_ids, extract_all_citations, extract_citation_markers
+│   ├── validate_claim.py                  # claim_supported_by_source, is_supported
+│   ├── build_citation_schema.py           # build_citation_schema
+│   └── find_best_source.py                # find_best_source
+│
+└── doctools/                              # 8 tools / 7 files
+    ├── generate_pdf.py                    # generate_pdf
+    ├── generate_docx.py                   # generate_docx
+    ├── generate_filename.py               # generate_filename
+    ├── get_pdf_metadata.py                # get_pdf_metadata
+    ├── split_sections.py                  # split_sections
+    ├── build_doc_sections.py              # build_doc_sections
+    └── format_citations.py                # format_citations_inline, count_citations
+```
+
+#### **Design Pattern: One Tool = One Function in One File**
+
+- **No wrapper classes** — every tool is a plain `def` with explicit parameters
+- **No `get_tool(settings)` factory** — functions take their own parameters; no hidden globals
+- **`TOOL_REGISTRY` in `__init__.py`** maps name → function for dynamic lookup by the orchestrator and routes
+- **Direct imports preferred**: `from src.tools.filesystemtools.write_file import write_text` — agents import only what they use
+
+```python
+# src/tools/__init__.py
+from .filesystemtools.write_file import write_text, write_json
+from .filesystemtools.read_file import read_text, read_json
+# ... all 55 tools imported ...
+
+TOOL_REGISTRY = {
+    "write_text": write_text,
+    "write_json": write_json,
+    "read_text": read_text,
+    # ...
+}
+
+def get_tool(name: str):
+    return TOOL_REGISTRY[name]
+
+def list_tools() -> list[str]:
+    return list(TOOL_REGISTRY.keys())
+```
+
+#### **Why the old `agents/tools.py` was removed**
+
+- **Wrapper class was noise**: 27 tools × `__init__` boilerplate × `get_tool()` indirection made the call sites harder to read
+- **Hidden `settings` dependency**: the factory accepted a `settings` arg that threaded through every call; tests had to construct the whole object
+- **No dynamic discovery**: tools were hard-coded in one file — adding a tool required editing the wrapper
+- **One tool per file** makes ownership obvious (filename → responsibility), testable in isolation, and greppable
+
+#### **`aiofiles` Fallback**
+
+- `aiofiles` is **optional**. Tool functions attempt `import aiofiles` and fall back to synchronous I/O when it is not installed
+- No new pip dependencies introduced — falls back gracefully so the system runs in minimal environments
+
+### 🌐 New API Endpoint
+
+#### **`POST /search/document`** (`src/api/routes/search.py`)
+- Runs the standard `/search` pipeline, then:
+  1. Calls `build_doc_sections()` to structure the answer into sections
+  2. Calls `generate_pdf()` **or** `generate_docx()` based on request
+  3. Returns the file as a streaming download
+- Lets the basic search path produce a downloadable report — previously this required the full `/deep-insights` flow
+- No breaking changes: existing `/search` and `/deep-insights` endpoints unchanged
+
+### 🔌 Wiring
+
+- `src/query/deepinsight/orchestrator.py` — `self.tools = TOOL_REGISTRY` (function-based registry)
+- All 5 agents (RAG, Web Search, Synthesis, Citation Validator, DocGen) import tools individually
+- `src/api/routes/search.py` — `POST /search/document` uses `build_doc_sections()` + `generate_pdf()` / `generate_docx()`
+
+### 🔄 Compatibility
+
+- **No breaking changes** — all v2.0.0 endpoints and agent APIs unchanged
+- Old `src/query/deepinsight/agents/tools.py` is removed; any caller using `get_tool()` should switch to `from src.tools import get_tool` (same signature, function-based registry) or import the function directly
+
+---
+
 ## v2.0.0 - Production-Ready Clinical Decision Support System (2026-05-31)
 
 ### 🚀 Major Features & System Architecture
