@@ -206,6 +206,46 @@ The standard `/search` endpoint returns JSON. The new `/search/document` endpoin
 
 This means a basic RAG search can now produce a downloadable clinical report without going through the full multi-agent DeepInsights pipeline.
 
+### Async vs Sync Tools
+
+The 55 tools in `src/tools/` split cleanly along the I/O boundary. Every agent that calls a tool needs to know which is which so it `await`s the right ones.
+
+| Class | Count | Examples | How agents handle them |
+|-------|------:|----------|------------------------|
+| Async (coroutine) | 22 | `write_text`, `read_text`, `save_chunk`, `delete_file`, `make_dir`, `load_chunk` | `await tool_fn(...)` |
+| Sync | 33 | `extract_domain`, `filter_medical`, `claim_supported_by_source`, `build_citation_schema`, `generate_pdf` | Plain call: `result = tool_fn(...)` |
+
+In practice, the sync bucket dominates the hot path: citation extraction, web result filtering, document section building, and PDF/DOCX rendering are all CPU-light and synchronous. The async bucket is exclusively filesystem I/O (the write/read/edit/list/make/save/delete family plus the `save_chunk` / `load_chunk` pair).
+
+### `call_tool()` — Auto-Await Dispatch
+
+For the orchestrator and the `/search/document` route — where the tool name comes from a config / request rather than a static import — use `call_tool()` to dispatch uniformly. It looks up the tool, checks the async flag, and awaits only when needed:
+
+```python
+from src.tools import call_tool, is_async_tool
+
+# Uniform call — no need to know if the tool is async
+result = await call_tool("write_text", "report.md", body, output_dir="/tmp/openinsight_reports")
+
+# Conditional branch when you need to know ahead of time (e.g. for logging)
+if is_async_tool("read_text"):
+    text = await call_tool("read_text", "report.md")
+else:
+    text = call_tool("read_text", "report.md")
+```
+
+Prefer **direct imports** (`from src.tools.doctools.generate_pdf import generate_pdf`) when the tool name is known at the call site — they're greppable and let the type checker see the signature. Reach for `call_tool()` when the name is dynamic.
+
+### Safety Guards on Mutating Tools
+
+Every filesystem tool now refuses to operate on paths outside `ALLOWED_ROOTS` (`/tmp/openinsight_temp`, `/tmp/openinsight_reports`, `/tmp`). Agents calling mutating tools must be aware of the new failure modes:
+
+- **`write_*` and `make_dir*`** raise `ValueError` for unsafe paths — the agent's retry logic should treat this as a hard failure, not a transient error
+- **`delete_directory` and `cleanup_temp_files`** raise `PermissionError` unless the caller passes `confirm=True`. The DocGen agent's cleanup path is the most likely caller; it must either keep its targets inside the allowed roots or pass `confirm=True` explicitly
+- **`read_*`, `list_*`, `get_file_*`** silently return `None` / `[]` / `0` for unsafe paths — agents that need to distinguish "file missing" from "path rejected" should check the log output
+
+If an agent genuinely needs to read or write outside the sandbox (e.g. an ingestion path that lands PDFs in a corpus directory), pass an `allowed_roots=` argument to the safety helpers in `src/tools/safety.py`. The default allowlist is intentionally narrow.
+
 ---
 
 ## Intent Router Logic

@@ -5,11 +5,14 @@ from urllib.parse import urlparse
 
 
 def extract_domain(url: str) -> str:
-    """Return the netloc of a URL, stripping 'www.' prefix. Returns 'unknown' on failure."""
+    """Return the netloc of a URL, stripping 'www.' prefix. Returns 'unknown' on failure or empty netloc."""
     if not url:
         return "unknown"
     try:
-        return urlparse(url).netloc.replace("www.", "")
+        netloc = urlparse(url).netloc
+        if not netloc:
+            return "unknown"
+        return netloc.replace("www.", "")
     except Exception:
         return "unknown"
 

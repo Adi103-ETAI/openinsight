@@ -5,12 +5,17 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from src.tools.safety import is_path_safe
+
 logger = logging.getLogger(__name__)
 
 
 async def list_files(dir_path: str, pattern: str = "*", recursive: bool = False) -> List[str]:
     """List files in a directory matching pattern. Returns sorted list of paths."""
     root = Path(dir_path)
+    if not is_path_safe(root):
+        logger.warning(f"refusing to list outside allowed roots: {dir_path}")
+        return []
     if not root.exists() or not root.is_dir():
         return []
     if recursive:
@@ -26,8 +31,11 @@ async def list_by_extension(dir_path: str, ext: str, recursive: bool = False) ->
 
 
 async def get_file_size(path: str) -> int:
-    """Return file size in bytes. Returns 0 if not found."""
+    """Return file size in bytes. Returns 0 if not found or path unsafe."""
     p = Path(path)
+    if not is_path_safe(p):
+        logger.warning(f"refusing to stat outside allowed roots: {path}")
+        return 0
     if p.exists() and p.is_file():
         return p.stat().st_size
     return 0
@@ -36,6 +44,9 @@ async def get_file_size(path: str) -> int:
 async def get_file_info(path: str) -> Optional[dict]:
     """Return basic file info (size, modified, created) or None."""
     p = Path(path)
+    if not is_path_safe(p):
+        logger.warning(f"refusing to stat outside allowed roots: {path}")
+        return None
     if not p.exists():
         return None
     stat = p.stat()

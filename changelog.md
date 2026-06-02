@@ -1,6 +1,175 @@
 # OpenInsight Changelog
 
-## v2.1.0 - New Agents & Tools Refactor (2026-06-02)
+## v0.2.1 - Tools Security & Async-Metadata Hardening (2026-06-02)
+
+### 🔒 New `src/tools/safety.py` Module
+
+A single, shared safety layer centralizing the defensive checks every filesystem tool needs. Eliminates duplicated validation logic across the 27 filesystem tools and gives the rest of the system a stable, well-tested API to import from.
+
+#### `ALLOWED_ROOTS` allowlist
+
+```python
+ALLOWED_ROOTS = [
+    Path("/tmp") / "openinsight_temp",
+    Path("/tmp") / "openinsight_reports",
+    Path("/tmp"),  # broadest fallback for any /tmp sub-dir
+]
+```
+
+By default, tools can only read / write / delete under these roots. Callers may pass `allowed_roots=` to extend the list for special cases (e.g. ingestion scratch dirs).
+
+#### Helpers
+
+| Helper | Purpose |
+|--------|---------|
+| `sanitize_filename(name, max_length=200)` | Strips `/`, `\`, NUL, control chars; replaces unsafe chars with `_`; collapses repeats; falls back to `"unnamed"` |
+| `sanitize_directory_name(name)` | Stricter — also strips leading dots to forbid hidden dirs |
+| `is_path_safe(path, allowed_roots=None)` | `str \| Path` → `bool`; resolves then checks membership in an allowed root |
+| `ensure_safe_path(path, allowed_roots=None)` | Same check but raises `ValueError` on failure and returns the resolved `Path` |
+| `is_absolute_or_traversal(path_str)` | `True` for `/foo`, `~/foo`, or any segment equal to `..` |
+| `require_confirm(operation, path, confirm)` | No-op for safe paths; raises `PermissionError` for destructive ops outside `ALLOWED_ROOTS` unless `confirm=True` |
+
+### 🛡️ Filesystem Tool Hardening
+
+Every filesystem tool now refuses to operate on paths outside `ALLOWED_ROOTS`. The behavior is split by risk class so call sites get predictable feedback.
+
+| Tool | Behavior on unsafe path |
+|------|-------------------------|
+| `write_text` / `write_json` / `write_bytes` | **Raises `ValueError`** — refuses to write |
+| `read_text` / `read_json` / `read_bytes` | Returns `None`, logs a warning |
+| `append_to_file` / `replace_in_file` / `insert_at_line` | Returns `False`; functions now return `bool` |
+| `list_files` / `list_by_extension` / `get_file_size` / `get_file_info` | Returns `[]` / `0` / `None` |
+| `make_dir` / `make_temp_dir` / `make_reports_dir` | **Raises `ValueError`** for absolute names or `..` traversal |
+| `save_chunk` / `load_chunk` | `save_chunk` sanitizes the chunk ID; `load_chunk` raises on unsafe path |
+| `delete_file` / `delete_directory` / `cleanup_temp_files` | **Raises `PermissionError`** unless `confirm=True` |
+
+The two new `confirm=True` parameters — `delete_directory(path, confirm=True)` and `cleanup_temp_files(..., confirm=True)` — are the explicit override escape hatch. They log a warning when used so audit trails remain visible.
+
+### 🧰 `TOOL_REGISTRY` Now Carries Async/Sync Metadata
+
+The registry moved from a flat `name → callable` map to a metadata dict per tool, so callers can decide whether to `await` a result **without invoking it**.
+
+#### Old shape (v0.2.0)
+
+```python
+TOOL_REGISTRY: dict[str, Callable] = {
+    "write_text": write_text,
+    "read_text": read_text,
+    # ...
+}
+```
+
+#### New shape (v0.2.1)
+
+```python
+TOOL_REGISTRY: dict[str, dict] = {
+    "write_text": {
+        "fn": write_text,
+        "async": True,
+        "desc": "Write text content to a file in the temp dir.",
+        "name": "write_text",
+    },
+    # ...
+}
+```
+
+#### New helpers in `src/tools/__init__.py`
+
+| Helper | Returns | Use case |
+|--------|---------|----------|
+| `get_tool(name)` | The callable (backward compat with v0.2.0) | Direct invocation when you already know the signature |
+| `get_tool_meta(name)` | Full metadata dict | Inspect `async` / `desc` before calling |
+| `is_async_tool(name)` | `bool` | Branch on `await` without calling |
+| `call_tool(name, *args, **kwargs)` | Result of the call (auto-awaited if async) | Uniform dispatch from the orchestrator |
+| `list_async_tools()` / `list_sync_tools()` | Sorted `list[str]` | Diagnostics, UI affordance hints, test selection |
+| `TOOL_FUNCTIONS` | `dict[str, Callable]` | Backward-compat alias for any code that still iterates a flat name→fn map |
+
+```python
+from src.tools import call_tool, is_async_tool
+
+# Auto-await if needed
+result = await call_tool("write_text", "report.md", "hello", output_dir="/tmp/openinsight_reports")
+
+# Inspect without invoking
+if is_async_tool("read_text"):
+    text = await call_tool("read_text", "report.md")
+else:
+    text = call_tool("read_text", "report.md")
+```
+
+#### Final tool counts
+
+**22 async tools, 33 sync tools — 55 total.** All async tools are filesystem I/O (the I/O-bound set); web / citation / doc helpers are sync. The metadata is derived automatically from `inspect.iscoroutinefunction` at module load, so adding a new tool stays one-liner simple.
+
+### 📄 Safer PDF Date Parsing
+
+`src/tools/doctools/get_pdf_metadata.py` was crashing on malformed or non-string date values from PyPDF2's `document_info`. Two small private helpers and a regex fix solve it.
+
+- **`_coerce_date(value)`** — handles `datetime`, PDF `D:YYYYMMDDhhmmss...` strings, ISO-8601 strings, `None`, and unknown types defensively (returns `None` instead of raising)
+- **`_coerce_str(value)`** — handles `None` and empty strings (returns `""`)
+- **Regex fix** — the day-capture group is now actually capturing (`r"^D:(\d{4})(\d{2})(\d{2})..."`), so partial dates are parsed correctly
+
+`get_pdf_metadata` no longer crashes on bad date types — it returns what it can parse and `None` for the rest.
+
+### 🧠 Citation Heuristic Plugin Point
+
+`src/tools/citationtools/validate_claim.py` now documents its own limitations and exposes a clean extension seam for semantic checks.
+
+#### Documented limitations (now in the module docstring)
+
+- **Token overlap is not semantic similarity** — "metformin is safe" and "metformin is unsafe" share nearly all tokens
+- **Lexical negation only** — relies on a small negation-word list; doesn't understand syntactic negation
+- **No stemming** — "treat", "treats", "treated" are scored as different tokens
+- **No numeric claim handling** — "500 mg vs 250 mg" looks like high overlap to the heuristic
+- **Domain-word inflation** — repeated medical terms (e.g. "diabetes") inflate the overlap score for unrelated claims
+
+#### Plugin API
+
+```python
+from src.tools.citationtools.validate_claim import (
+    register_semantic_check, get_semantic_check,
+)
+
+# Plug in a better check (e.g. embedding similarity, NLI model)
+def my_semantic_check(claim: str, source: str) -> dict | None:
+    score = my_embedder.similarity(claim, source)
+    if score is None:
+        return None  # fall through to token overlap
+    return {"supported": score > 0.7, "confidence": score, "method": "embedding"}
+
+register_semantic_check(my_semantic_check)
+
+# Later, to revert to the built-in token-overlap check:
+register_semantic_check(None)
+```
+
+When a registered check returns a non-`None` dict, `claim_supported_by_source` uses that result as the primary signal and **still includes the token-overlap result under `result["fallback"]`** for transparency. This makes it easy to A/B a new model against the old heuristic without losing visibility.
+
+### 📚 New Documentation
+
+- **`src/tools/README.md`** — comprehensive reference for the package. Covers the directory layout, the two usage patterns (direct import vs. registry), the async/sync classification, the safety rules, optional dependencies (`aiofiles` / `reportlab` / `python-docx`), and a copy-paste recipe for the citation plugin. This is the single page to share with anyone integrating a new agent or route.
+
+### ✅ New Test Suite
+
+- **`tests/test_tools.py`** — **52 tests, all passing, 0 regressions**. Coverage:
+  - Registry metadata shape, async/sync classification, and backward-compat aliases
+  - Safety helpers: filename sanitization, path validation, traversal rejection
+  - Filesystem tools: write/read/edit roundtrips, write rejection of unsafe paths, read refusal of unsafe paths, delete confirmation requirement
+  - Web search tools: domain parsing, medical filtering, ranking, dedup, grouping
+  - Citation tools: extraction, validation, negation detection, plugin override, schema building, source matching
+  - Doc tools: filename generation, section splitting, citation counting
+  - PDF metadata coercion: `datetime`, `str`, `None`, partial dates
+
+### 🔄 Compatibility
+
+- **No breaking changes for direct importers** — `from src.tools.filesystemtools.write_file import write_text` continues to work; only the *failure modes* are new
+- `TOOL_REGISTRY` consumers that treated it as `dict[str, Callable]` should switch to `TOOL_FUNCTIONS` (kept as a flat alias) or use `get_tool(name)`
+- Agents calling `delete_*` or `write_*` outside `ALLOWED_ROOTS` must now pass `confirm=True` or move the target path under an allowed root
+- The new `require_confirm` check fires for `delete_directory` and `cleanup_temp_files` only — `delete_file` was already confined to the temp dir, so its behavior is unchanged for in-bounds paths
+
+---
+
+## v0.2.0 - New Agents & Tools Refactor (2026-06-02)
 
 ### 🤖 New Agents
 
@@ -132,12 +301,13 @@ def list_tools() -> list[str]:
 
 ### 🔄 Compatibility
 
-- **No breaking changes** — all v2.0.0 endpoints and agent APIs unchanged
-- Old `src/query/deepinsight/agents/tools.py` is removed; any caller using `get_tool()` should switch to `from src.tools import get_tool` (same signature, function-based registry) or import the function directly
+- **No breaking changes** — all v0.1.0 endpoints and agent APIs unchanged
+  - Old `src/query/deepinsight/agents/tools.py` is removed; any caller using `get_tool()` should switch to `from src.tools import get_tool` (same signature, function-based registry) or import the function directly
+- **No breaking changes** — all v0.1.0 endpoints and agent APIs unchanged
 
 ---
 
-## v2.0.0 - Production-Ready Clinical Decision Support System (2026-05-31)
+## v0.1.0 - Production-Ready Clinical Decision Support System (2026-05-31)
 
 ### 🚀 Major Features & System Architecture
 

@@ -22,7 +22,7 @@ from src.query.deepinsight.agents.web_search_agent import WebSearchAgent, WebSea
 from src.query.deepinsight.agents.synthesis_agent import SynthesisAgent, SynthesisResult
 from src.query.deepinsight.agents.citation_validator import CitationValidator, CitationResult
 from src.query.deepinsight.agents.docgen_agent import DocGenAgent, DocGenResult
-from src.tools import TOOL_REGISTRY, get_tool
+from src.tools import TOOL_REGISTRY, TOOL_FUNCTIONS, get_tool, is_async_tool
 from src.query.search.cache import SearchCache
 from src.query.validation.validator import validate_answer
 from src.query.contradiction_detector import ContradictionDetector
@@ -84,8 +84,9 @@ class DeepInsightOrchestrator:
         self.citation_validator = CitationValidator(settings=self.settings, llm_router=self.llm_router)
         self.docgen_agent = DocGenAgent(settings=self.settings, llm_router=self.llm_router)
         
-        # Initialize tools (function-based registry)
-        self.tools = TOOL_REGISTRY
+        # Initialize tools (function-based registry; full metadata also available)
+        self.tools = TOOL_FUNCTIONS
+        self.tool_registry = TOOL_REGISTRY
         
         self.contradiction_detector = ContradictionDetector()
         self.cache = SearchCache()

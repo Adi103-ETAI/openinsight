@@ -10,11 +10,25 @@ try:
 except ImportError:
     aiofiles = None
 
+from src.tools.safety import is_path_safe
+
 logger = logging.getLogger(__name__)
 
 
+def _validate_read_path(path: str) -> str:
+    """Reject reads outside allowed roots. Returns the original path if safe."""
+    if not is_path_safe(path):
+        raise ValueError(f"refusing to read outside allowed roots: {path}")
+    return path
+
+
 async def read_text(path: str) -> Optional[str]:
-    """Read text content from a file. Returns None if not found."""
+    """Read text content from a file. Returns None if not found or path unsafe."""
+    try:
+        _validate_read_path(path)
+    except ValueError as e:
+        logger.warning(str(e))
+        return None
     try:
         if aiofiles:
             async with aiofiles.open(path, "r", encoding="utf-8") as f:
@@ -39,7 +53,12 @@ async def read_json(path: str) -> Optional[Dict[str, Any]]:
 
 
 async def read_bytes(path: str) -> Optional[bytes]:
-    """Read raw bytes from a file."""
+    """Read raw bytes from a file. Returns None if not found or path unsafe."""
+    try:
+        _validate_read_path(path)
+    except ValueError as e:
+        logger.warning(str(e))
+        return None
     try:
         if aiofiles:
             async with aiofiles.open(path, "rb") as f:

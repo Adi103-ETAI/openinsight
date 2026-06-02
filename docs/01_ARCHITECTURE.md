@@ -167,6 +167,80 @@ src/tools/
 
 The previous `src/query/deepinsight/agents/tools.py` exposed each tool as a class with a `get_tool(settings)` factory. This made call sites verbose, made tests require constructing a wrapper, and made adding a tool a multi-file edit. The function-based layout is greppable, testable in isolation, and makes the dependency graph obvious from import statements.
 
+#### Safety & Hardening
+
+A shared safety layer in `src/tools/safety.py` centralizes path validation, filename sanitization, and allowed-roots enforcement so individual tool files stay small.
+
+**`ALLOWED_ROOTS`** is the default write/delete sandbox:
+
+```python
+ALLOWED_ROOTS = [
+    Path("/tmp") / "openinsight_temp",
+    Path("/tmp") / "openinsight_reports",
+    Path("/tmp"),  # broadest fallback
+]
+```
+
+Every filesystem tool refuses to operate on paths that don't resolve under one of these roots (or a caller-supplied override). The behavior matrix is risk-aware so call sites get predictable feedback:
+
+| Risk class | Tools | Behavior on unsafe path |
+|------------|-------|-------------------------|
+| Mutating write | `write_text` / `write_json` / `write_bytes` / `make_dir*` | **Raise `ValueError`** |
+| Read | `read_text` / `read_json` / `read_bytes` | Return `None` + log warning |
+| Edit-in-place | `append_to_file` / `replace_in_file` / `insert_at_line` | Return `False` (return type is now `bool`) |
+| Inspect | `list_files` / `list_by_extension` / `get_file_size` / `get_file_info` | Return `[]` / `0` / `None` |
+| Destructive | `delete_file` / `delete_directory` / `cleanup_temp_files` | **Raise `PermissionError`** unless `confirm=True` |
+
+Two small helpers are the workhorses — `sanitize_filename(name, max_length=200)` for user-supplied names (strips separators, NUL, control chars; collapses underscores; falls back to `"unnamed"`), and `is_path_safe(path, allowed_roots=None)` which accepts `str | Path`, resolves it, and returns whether it sits under an allowed root. `ensure_safe_path` is the raising variant and `require_confirm(operation, path, confirm)` is the escape hatch for destructive ops that genuinely need to go outside the sandbox.
+
+#### `TOOL_REGISTRY` Metadata
+
+The registry moved from a flat `name → callable` map to a metadata dict per tool, so callers can decide whether to `await` a result without invoking it.
+
+```python
+TOOL_REGISTRY: dict[str, dict] = {
+    "write_text": {
+        "fn": <coroutine>,           # the actual function
+        "async": True,               # iscoroutinefunction() at load time
+        "desc": "Write text ...",    # short human-readable summary
+        "name": "write_text",
+    },
+    # ...
+}
+```
+
+New helpers in `src/tools/__init__.py` keep this fast and uniform:
+
+| Helper | Returns | When to use |
+|--------|---------|-------------|
+| `get_tool(name)` | The callable | Backward-compat direct invocation |
+| `get_tool_meta(name)` | Full metadata dict | Inspect `async` / `desc` before calling |
+| `is_async_tool(name)` | `bool` | Branch on `await` without calling |
+| `call_tool(name, *args, **kwargs)` | Result of the call (auto-awaited) | Uniform dispatch from the orchestrator |
+| `list_async_tools()` / `list_sync_tools()` | Sorted `list[str]` | Diagnostics, test selection |
+| `TOOL_FUNCTIONS` | `dict[str, Callable]` | Flat alias kept for any code that still iterates a `name → fn` map |
+
+**Final counts:** 22 async tools (all filesystem I/O), 33 sync tools (web / citation / doc helpers and the in-memory `hash_*` / `truncate_*` tools) — 55 total. The async flag is derived automatically from `inspect.iscoroutinefunction` at module load, so adding a new tool stays one-liner simple.
+
+#### Citation Plugin
+
+`claim_supported_by_source` is a token-overlap heuristic by default — and its limitations (no semantic similarity, lexical negation only, no stemming, no numeric claim handling, domain-word inflation) are now documented in the module docstring of `src/tools/citationtools/validate_claim.py`. To replace it with a better check (embeddings, NLI, etc.), register one and it becomes the primary signal — the token-overlap result is still attached under `result["fallback"]` for transparency:
+
+```python
+from src.tools.citationtools.validate_claim import register_semantic_check
+
+def my_check(claim: str, source: str) -> dict | None:
+    score = my_embedder.similarity(claim, source)
+    if score is None:
+        return None  # fall through to token overlap
+    return {"supported": score > 0.7, "confidence": score, "method": "embedding"}
+
+register_semantic_check(my_check)
+# Later: register_semantic_check(None)  # revert to the built-in
+```
+
+See `src/tools/README.md` for the full safety and plugin reference.
+
 ---
 
 ## Logging
