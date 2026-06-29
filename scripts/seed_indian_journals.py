@@ -242,6 +242,13 @@ async def main() -> int:
         action="store_true",
         help="Only discover URLs, do not ingest (useful for testing)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Cap total articles across all sources (useful for test runs). "
+             "Example: --limit 20 ingests at most 20 articles total.",
+    )
     args = parser.parse_args()
 
     # Parse journal list
@@ -254,6 +261,8 @@ async def main() -> int:
     logger.info("=" * 70)
     logger.info(f"Source: {args.source}")
     logger.info(f"Discover only: {args.discover_only}")
+    if args.limit:
+        logger.info(f"Total cap: {args.limit} articles across all sources")
     if journals:
         logger.info(f"Journals: {journals}")
     logger.info("-" * 70)
@@ -262,20 +271,39 @@ async def main() -> int:
 
     if args.source in ("pubmed", "all"):
         logger.info("[1/4] PubMed — Indian journals")
-        total += await discover_pubmed(journals, args.max_per_journal, args.discover_only)
+        count = await discover_pubmed(journals, args.max_per_journal, args.discover_only)
+        if args.limit:
+            remaining = max(0, args.limit - total)
+            count = min(count, remaining)
+        total += count
 
     if args.source in ("indmed", "all"):
-        logger.info("[2/4] IndMED — Indian journals on indmedinfo.nic.in")
-        total += await discover_indmed(journals, args.max_per_journal, args.discover_only)
+        if not args.limit or total < args.limit:
+            logger.info("[2/4] IndMED — Indian journals on indmedinfo.nic.in")
+            count = await discover_indmed(journals, args.max_per_journal, args.discover_only)
+            if args.limit:
+                remaining = max(0, args.limit - total)
+                count = min(count, remaining)
+            total += count
 
     if args.source in ("medknow", "all"):
-        logger.info("[3/4] Medknow — Full-text enrichment from medknow.com")
-        # For Medknow, journals arg uses abbreviations (e.g., "ijp") not full names
-        total += await discover_medknow(journals, args.max_per_journal, args.discover_only)
+        if not args.limit or total < args.limit:
+            logger.info("[3/4] Medknow — Full-text enrichment from medknow.com")
+            # For Medknow, journals arg uses abbreviations (e.g., "ijp") not full names
+            count = await discover_medknow(journals, args.max_per_journal, args.discover_only)
+            if args.limit:
+                remaining = max(0, args.limit - total)
+                count = min(count, remaining)
+            total += count
 
     if args.source in ("pmc_india", "all"):
-        logger.info("[4/4] PMC India — Full-text with Indian affiliations")
-        total += await discover_pmc_india(args.specialty, args.max_results, args.discover_only)
+        if not args.limit or total < args.limit:
+            logger.info("[4/4] PMC India — Full-text with Indian affiliations")
+            count = await discover_pmc_india(args.specialty, args.max_results, args.discover_only)
+            if args.limit:
+                remaining = max(0, args.limit - total)
+                count = min(count, remaining)
+            total += count
 
     logger.info("-" * 70)
     logger.info(f"Total articles discovered: {total}")

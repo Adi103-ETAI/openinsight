@@ -303,3 +303,46 @@ class TestMedknowParser:
         modified = SAMPLE_ARTICLE_HTML.replace(b"metformin", b"glimepiride")
         r2, _ = parser.parse(self._make_doc(modified))
         assert r1.content_hash != r2.content_hash
+
+
+class TestMedknowParserProvenanceFields:
+    """Phase 1 — verify trust_tier + indian_source flow."""
+
+    def _make_doc_with_tier(self, trust_tier: int) -> ScrapedDocument:
+        return ScrapedDocument(
+            url="https://www.medknow.com/article.asp?issn=1998-3751;year=2024;volume=56;issue=1;spage=1;epage=8;aulast=Sharma",
+            source="medknow",
+            content=SAMPLE_ARTICLE_HTML,
+            content_type="text/html",
+            title="Test Article",
+            authors=["Sharma, P"],
+            journal="Indian Journal of Pharmacology",
+            doi="10.1/x",
+            pubdate="2024-01-01",
+            metadata={"journal_name": "Indian Journal of Pharmacology", "journal_abbr": "ijp", "issn": "1998-3751"},
+            trust_tier=trust_tier,
+            india_relevant=True,
+            indian_source=True,
+        )
+
+    def test_chunks_have_trust_tier_from_doc(self) -> None:
+        parser = MedknowParser()
+        for tier in [1, 2, 3, 4, 5]:
+            doc = self._make_doc_with_tier(tier)
+            _, chunks = parser.parse(doc)
+            assert len(chunks) > 0
+            for chunk in chunks:
+                assert chunk.trust_tier == tier
+
+    def test_chunks_have_indian_source_true(self) -> None:
+        """Medknow chunks should always have indian_source=True (Indian journals)."""
+        parser = MedknowParser()
+        _, chunks = parser.parse(self._make_doc_with_tier(3))
+        for chunk in chunks:
+            assert chunk.indian_source is True
+
+    def test_chunks_have_empty_also_indexed_in(self) -> None:
+        parser = MedknowParser()
+        _, chunks = parser.parse(self._make_doc_with_tier(3))
+        for chunk in chunks:
+            assert chunk.also_indexed_in == []

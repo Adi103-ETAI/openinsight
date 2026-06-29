@@ -216,6 +216,10 @@ class IndMEDParser:
             evidence_level=record.evidence_level,
             parser_version="indmed-v1",
             token_estimate=len(text) // 4,  # rough estimate
+            # Phase 1 provenance fields
+            trust_tier=doc.trust_tier,  # per-journal tier from JOURNAL_TRUST_TIER map
+            indian_source=True,  # IndMED = Indian journals
+            also_indexed_in=[],  # populated by cross-source dedup later
         )
 
     def _extract_year(self, pubdate: str | None) -> int | None:

@@ -187,6 +187,10 @@ class MedknowParser:
             evidence_level=record.evidence_level,
             parser_version="medknow-v1",
             token_estimate=len(text) // 4,
+            # Phase 1 provenance fields
+            trust_tier=doc.trust_tier,
+            indian_source=True,  # Medknow = Indian journals
+            also_indexed_in=[],  # populated by cross-source dedup
         )
 
     def _extract_year(self, pubdate: str | None) -> int | None:

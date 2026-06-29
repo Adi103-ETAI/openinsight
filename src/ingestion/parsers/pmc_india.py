@@ -312,6 +312,12 @@ class PMCIndiaParser:
             evidence_level=record.evidence_level,
             parser_version="pmc_india-v1",
             token_estimate=len(text) // 4,
+            # Phase 1 provenance fields
+            trust_tier=doc.trust_tier,
+            indian_source=doc.indian_source if doc.indian_source is not None else False,
+            # PMC articles have Indian authors but PMC itself is international,
+            # so indian_source follows the doc's flag (False by default for PMC)
+            also_indexed_in=[],  # populated by cross-source dedup (PMC articles usually have PMID)
         )
 
     def _extract_year(self, pubdate: str | None) -> int | None:

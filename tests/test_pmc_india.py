@@ -239,3 +239,59 @@ class TestPMCIndiaParser:
         # Each sub-chunk should mention the section name
         for chunk in chunks:
             assert "Long Methods" in chunk.section
+
+
+class TestPMCIndiaParserProvenanceFields:
+    """Phase 1 — verify trust_tier + indian_source flow."""
+
+    def _make_doc_with_flags(self, trust_tier: int, indian_source: bool | None) -> ScrapedDocument:
+        return ScrapedDocument(
+            url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=11223344",
+            source="pmc_india",
+            content=SAMPLE_PMC_XML,
+            content_type="application/xml",
+            metadata={"pmc_id": "11223344", "pmc_id_full": "PMC11223344"},
+            trust_tier=trust_tier,
+            india_relevant=True,
+            indian_source=indian_source,
+        )
+
+    def test_chunks_have_trust_tier_from_doc(self) -> None:
+        parser = PMCIndiaParser()
+        for tier in [1, 2, 3, 4, 5]:
+            doc = self._make_doc_with_flags(tier, indian_source=False)
+            _, chunks = parser.parse(doc)
+            assert len(chunks) > 0
+            for chunk in chunks:
+                assert chunk.trust_tier == tier
+
+    def test_chunks_have_indian_source_false_by_default(self) -> None:
+        """PMC is international — indian_source should be False by default."""
+        parser = PMCIndiaParser()
+        doc = self._make_doc_with_flags(3, indian_source=False)
+        _, chunks = parser.parse(doc)
+        for chunk in chunks:
+            assert chunk.indian_source is False
+
+    def test_chunks_indian_source_set_to_true_when_doc_has_it(self) -> None:
+        """If the doc explicitly has indian_source=True (rare), chunks inherit it."""
+        parser = PMCIndiaParser()
+        doc = self._make_doc_with_flags(3, indian_source=True)
+        _, chunks = parser.parse(doc)
+        for chunk in chunks:
+            assert chunk.indian_source is True
+
+    def test_chunks_indian_source_none_falls_back_to_false(self) -> None:
+        """If doc.indian_source is None, chunk.indian_source should be False (not None)."""
+        parser = PMCIndiaParser()
+        doc = self._make_doc_with_flags(3, indian_source=None)
+        _, chunks = parser.parse(doc)
+        for chunk in chunks:
+            assert chunk.indian_source is False
+
+    def test_chunks_have_empty_also_indexed_in(self) -> None:
+        """PMC articles usually have PMIDs — dedup will populate this later."""
+        parser = PMCIndiaParser()
+        _, chunks = parser.parse(self._make_doc_with_flags(3, indian_source=False))
+        for chunk in chunks:
+            assert chunk.also_indexed_in == []

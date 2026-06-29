@@ -389,3 +389,69 @@ class TestIndMEDParser:
         doc2 = self._make_doc(modified_html)
         record2, _ = parser.parse(doc2)
         assert record1.content_hash != record2.content_hash
+
+
+class TestIndMEDParserProvenanceFields:
+    """Phase 1 — verify trust_tier + indian_source flow from ScrapedDocument to ChunkRecord."""
+
+    def _make_doc_with_tier(self, trust_tier: int) -> ScrapedDocument:
+        return ScrapedDocument(
+            url="https://indmedinfo.nic.in/index.php/ijp/article/view/4568",
+            source="indmed",
+            content=SAMPLE_ARTICLE_HTML,
+            content_type="text/html",
+            title="Test Article",
+            authors=["Sharma, P"],
+            journal="Indian Journal of Pharmacology",
+            doi="10.1/x",
+            pubdate="2024-01-01",
+            metadata={"journal_abbr": "ijp"},
+            trust_tier=trust_tier,
+            india_relevant=True,
+            indian_source=True,
+        )
+
+    def test_chunks_have_trust_tier_from_doc(self) -> None:
+        """trust_tier on ScrapedDocument should propagate to all chunks."""
+        parser = IndMEDParser()
+        for tier in [1, 2, 3, 4, 5]:
+            doc = self._make_doc_with_tier(tier)
+            _, chunks = parser.parse(doc)
+            assert len(chunks) > 0
+            for chunk in chunks:
+                assert chunk.trust_tier == tier, f"chunk {chunk.chunk_index} has tier {chunk.trust_tier}, expected {tier}"
+
+    def test_chunks_have_indian_source_true(self) -> None:
+        """IndMED chunks should always have indian_source=True."""
+        parser = IndMEDParser()
+        _, chunks = parser.parse(self._make_doc_with_tier(3))
+        for chunk in chunks:
+            assert chunk.indian_source is True
+
+    def test_chunks_have_empty_also_indexed_in(self) -> None:
+        """also_indexed_in starts empty — populated by cross-source dedup later."""
+        parser = IndMEDParser()
+        _, chunks = parser.parse(self._make_doc_with_tier(3))
+        for chunk in chunks:
+            assert chunk.also_indexed_in == []
+
+    def test_ijmr_journal_gets_tier_1(self) -> None:
+        """An IJMR article should produce tier-1 chunks (ICMR-backed, highest trust)."""
+        from src.ingestion.scrapers.sources.indmed import JOURNAL_TRUST_TIER
+        doc = ScrapedDocument(
+            url="https://indmedinfo.nic.in/index.php/ijmr/article/view/123",
+            source="indmed",
+            content=SAMPLE_ARTICLE_HTML,
+            content_type="text/html",
+            title="IJMR Article",
+            authors=["Test"],
+            journal="Indian Journal of Medical Research",
+            metadata={"journal_abbr": "ijmr"},
+            trust_tier=JOURNAL_TRUST_TIER["ijmr"],
+            india_relevant=True,
+            indian_source=True,
+        )
+        parser = IndMEDParser()
+        _, chunks = parser.parse(doc)
+        for chunk in chunks:
+            assert chunk.trust_tier == 1
