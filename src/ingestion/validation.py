@@ -13,9 +13,20 @@ from src.ingestion.document_db import ChunkRecord, DocumentRecord
 
 # Valid source types
 VALID_SOURCE_TYPES = {
-    "pubmed", "icmr", "nmc", "mohfw", "state_guideline",
-    "cochrane", "who", "cdc", "nih", "statpearls",
-    "nmc_guideline", "rssdi", "research",
+    # International / generic
+    "pubmed", "cochrane", "who", "cdc", "nih", "statpearls", "research",
+    # Indian government + regulatory (Layer 1+3+4)
+    "icmr", "nmc", "nmc_guideline", "mohfw", "state_guideline", "rssdi",
+    # Phase 1 — Indian journals
+    "indmed", "medknow", "pmc_india",
+    # Phase 2 — Foundational open-access (will be expanded as parsers ship)
+    "ncbi_bookshelf", "nmc_curriculum",
+    # Phase 3 — Drug & regulatory (will be expanded as parsers ship)
+    "nfi", "cdsco", "ctri", "pvpi", "ipc",
+    # Phase 4 — Specialty guidelines (will be expanded as parsers ship)
+    "csi", "ntep", "nvbdcp",
+    # Phase 5 — Epidemiology (will be expanded as parsers ship)
+    "nfhs", "ncdir",
 }
 
 # Minimum and maximum document content length (characters)
