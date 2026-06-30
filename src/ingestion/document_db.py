@@ -82,3 +82,7 @@ class ChunkRecord(BaseModel):
     token_count: int = 0
     token_estimate: int = 0
     parser_version: str = "v1"
+    # Phase 1 additions — provenance fields for retrieval ranking
+    trust_tier: int = 3  # 1 (highest, e.g., ICMR/NFI) → 5 (lowest, e.g., web)
+    indian_source: Optional[bool] = None  # True if from Indian publisher/journal/govt body
+    also_indexed_in: list[str] = Field(default_factory=list)  # other sources where this doc appears

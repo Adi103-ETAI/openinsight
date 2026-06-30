@@ -1131,6 +1131,379 @@ class IngestionPipeline:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: func(*args))
 
+    async def ingest_scraped_documents(
+        self,
+        documents: list[tuple[Any, list[Any]]],
+        source: str,
+        batch_size: int = 10,
+        recreate_index: bool = False,
+    ) -> dict[str, int]:
+        """
+        Ingest pre-parsed (DocumentRecord, list[ChunkRecord]) tuples from the
+        scraper framework.
+
+        This is the scraper-framework entry point — it bypasses the file-path
+        scanning + parser routing in ingest_directory() (those are handled by
+        the scraper framework's BaseScraper.fetch_one() + the source-specific
+        parser). This method handles: metadata enrichment → quality scoring →
+        dense + sparse embedding → Milvus upsert → MongoDB storage → monitor.
+
+        The existing ingest_directory() flow uses ChunkV3 objects internally;
+        this method handles ChunkRecord objects natively (produced by the
+        IndMED/Medknow/PMC India parsers) without conversion.
+
+        Args:
+            documents: list of (DocumentRecord, list[ChunkRecord]) tuples.
+                DocumentRecord and ChunkRecord are from src.ingestion.document_db.
+            source: source name (e.g., "indmed", "medknow", "pmc_india")
+            batch_size: docs per batch (default 10)
+            recreate_index: whether to recreate the Milvus collection (default False)
+
+        Returns:
+            Summary dict with counts:
+                documents_total, documents_stored, chunks_created, chunks_indexed,
+                chunks_filtered, files_failed
+        """
+        import uuid
+
+        from src.vectorstore.types import SparseVector, VectorPoint
+
+        logger.info(
+            "[pipeline:scraped] Starting ingestion of %d documents from source '%s'",
+            len(documents), source,
+        )
+
+        # Ensure Milvus collection exists
+        self.indexer.create_collection(
+            recreate=recreate_index,
+            collection_name=self.settings.vector_collection_v2,
+        )
+
+        run_started_at = datetime.utcnow()
+        summary: dict[str, int] = {
+            "documents_total": len(documents),
+            "documents_stored": 0,
+            "chunks_created": 0,
+            "chunks_indexed": 0,
+            "chunks_filtered": 0,
+            "files_failed": 0,
+        }
+
+        # Process in batches
+        for batch_start in range(0, len(documents), batch_size):
+            batch = documents[batch_start : batch_start + batch_size]
+            batch_index = batch_start // batch_size
+            logger.info(
+                "[pipeline:scraped] Batch %d: %d documents", batch_index, len(batch)
+            )
+
+            docs_for_batch: list[dict[str, Any]] = []
+            enriched_list: list[dict[str, Any]] = []
+            chunks_for_batch: list[Any] = []  # ChunkRecord objects
+
+            for doc_record, chunk_records in batch:
+                # Normalize DocumentRecord → dict (reuse existing _normalize_document
+                # by converting via __dict__ / model_dump)
+                try:
+                    if hasattr(doc_record, "model_dump"):
+                        doc_dict = doc_record.model_dump()
+                    elif hasattr(doc_record, "__dict__"):
+                        doc_dict = dict(doc_record.__dict__)
+                    else:
+                        doc_dict = dict(doc_record)
+                except Exception as e:
+                    logger.warning(
+                        "[pipeline:scraped] Failed to serialize document: %s", e
+                    )
+                    summary["files_failed"] += 1
+                    continue
+
+                # Build doc_id if missing
+                if not doc_dict.get("doc_id"):
+                    pmid = doc_dict.get("pmid") or doc_dict.get("pmid")
+                    doi = doc_dict.get("doi")
+                    if pmid:
+                        doc_dict["doc_id"] = f"pmid_{pmid}"
+                    elif doi:
+                        doc_dict["doc_id"] = f"doi_{doi.replace('/', '_')}"
+                    else:
+                        doc_dict["doc_id"] = self._hash_doc_id(
+                            doc_dict.get("url", ""),
+                            doc_dict.get("title", ""),
+                            doc_dict.get("content", ""),
+                        )
+
+                # Normalize document
+                normalized = self._normalize_document(doc_dict, source)
+
+                # Document-level validation
+                doc_record_validated = self._to_document_record(normalized, source)
+                doc_valid, doc_reason = validate_document(doc_record_validated)
+                if not doc_valid:
+                    logger.warning(
+                        "[pipeline:scraped] Document rejected: %s — %s",
+                        normalized.get("title", "")[:60], doc_reason,
+                    )
+                    summary["files_failed"] += 1
+                    continue
+
+                # Enrich metadata
+                try:
+                    enriched = self.metadata.enrich_document(normalized, source)
+                except Exception as e:
+                    logger.warning(
+                        "[pipeline:scraped] Metadata enrichment failed for '%s': %s",
+                        normalized.get("title", "")[:60], e,
+                    )
+                    enriched = normalized  # fall back to unenriched
+
+                # Validate chunks
+                valid_chunks = []
+                for chunk in chunk_records:
+                    chunk_valid, chunk_reason = validate_chunk(chunk)
+                    if chunk_valid:
+                        # Ensure document_id is set to the doc_id
+                        if not getattr(chunk, "document_id", None):
+                            chunk.document_id = normalized["doc_id"]
+                        valid_chunks.append(chunk)
+                    else:
+                        logger.debug(
+                            "[pipeline:scraped] Chunk rejected: %s — %s",
+                            getattr(chunk, "chunk_id", "?"), chunk_reason,
+                        )
+                        summary["chunks_filtered"] += 1
+
+                if not valid_chunks:
+                    logger.debug(
+                        "[pipeline:scraped] No valid chunks for '%s' — skipping",
+                        normalized.get("title", "")[:60],
+                    )
+                    continue
+
+                # Quality scoring (in-place on ChunkRecord — score_chunks expects
+                # objects with .chunk_text and .quality_score attributes, which
+                # ChunkRecord has)
+                try:
+                    # score_chunks expects ChunkV3 with .text; ChunkRecord has .chunk_text
+                    # We'll compute a simple quality score manually if score_chunks fails
+                    for chunk in valid_chunks:
+                        if not hasattr(chunk, "text"):
+                            # Add a temporary .text alias for score_chunks compatibility
+                            chunk.text = chunk.chunk_text
+                    score_chunks(valid_chunks)
+                    before_quality = len(valid_chunks)
+                    valid_chunks = [
+                        c for c in valid_chunks
+                        if c.quality_score >= self.settings.quality_score_threshold
+                    ]
+                    summary["chunks_filtered"] += before_quality - len(valid_chunks)
+                except Exception as e:
+                    logger.debug(
+                        "[pipeline:scraped] Quality scoring skipped: %s", e
+                    )
+
+                if not valid_chunks:
+                    continue
+
+                docs_for_batch.append(normalized)
+                enriched_list.append(enriched)
+                chunks_for_batch.extend(valid_chunks)
+
+            if not chunks_for_batch:
+                logger.info("[pipeline:scraped] Batch %d: no valid chunks — skipping", batch_index)
+                continue
+
+            # Embed: dense (from chunk_text) + sparse
+            contextual_texts = [c.chunk_text for c in chunks_for_batch]
+            total_chunks = len(contextual_texts)
+
+            dense_embeddings = None
+            embed_failed_indices: list[int] = []
+            max_embed_retries = 2
+
+            for attempt in range(max_embed_retries):
+                try:
+                    batch_embed_size = 32 if attempt == 0 else 16
+                    dense_embeddings, embed_failed_indices = await self._run_cpu(
+                        self.embedder.embed_batch,
+                        contextual_texts,
+                        batch_embed_size,
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "[pipeline:scraped] Embedding attempt %d failed: %s",
+                        attempt + 1, e,
+                    )
+                    embed_failed_indices = list(range(total_chunks))
+
+            if dense_embeddings is None:
+                logger.error(
+                    "[pipeline:scraped] Embedding failed after %d retries — storing to dead letter",
+                    max_embed_retries,
+                )
+                for doc in docs_for_batch:
+                    await self._store_to_dead_letter(
+                        Path(doc.get("url", "/")),
+                        ERROR_TYPE_EMBED,
+                        f"Embedding failed after {max_embed_retries} retries",
+                        retry_count=max_embed_retries,
+                    )
+                summary["files_failed"] += len(docs_for_batch)
+                continue
+
+            # Filter out failed embeddings
+            valid_indices = [i for i in range(len(dense_embeddings)) if i not in embed_failed_indices]
+            if len(valid_indices) < total_chunks:
+                logger.warning(
+                    "[pipeline:scraped] %d/%d embeddings failed — filtering",
+                    total_chunks - len(valid_indices), total_chunks,
+                )
+                chunks_for_batch = [chunks_for_batch[i] for i in valid_indices]
+                dense_embeddings = [dense_embeddings[i] for i in valid_indices]
+                contextual_texts = [contextual_texts[i] for i in valid_indices]
+
+            if not chunks_for_batch:
+                logger.error("[pipeline:scraped] All embeddings failed — skipping batch")
+                continue
+
+            # Compute sparse vectors
+            sparse_vectors = [
+                self.embedder.compute_sparse_vector(text) for text in contextual_texts
+            ]
+
+            # Build VectorPoints and upsert to Milvus
+            points: list[VectorPoint] = []
+            for chunk, dense_emb, sparse_vec in zip(
+                chunks_for_batch, dense_embeddings, sparse_vectors
+            ):
+                chunk_id = f"{chunk.document_id}-c{chunk.chunk_index:03d}"
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
+
+                # Build payload from ChunkRecord fields
+                payload: dict[str, Any] = {
+                    "raw_text": chunk.chunk_text,
+                    "chunk_id": chunk_id,
+                    "doc_id": chunk.document_id,
+                    "chunk_type": getattr(chunk, "section", "body") or "body",
+                    "section_title": getattr(chunk, "section", "") or "",
+                    "chunk_index": chunk.chunk_index,
+                    "title": chunk.title,
+                    "source_type": chunk.source_type,
+                    "source": chunk.source_type,  # alias for retrieval filter compat
+                    "year": 0,  # ChunkRecord doesn't have year — will be enriched later
+                    "india_relevant": chunk.is_india_specific,
+                    "indian_source": getattr(chunk, "indian_source", False) or False,
+                    "trust_tier": getattr(chunk, "trust_tier", 3),
+                    "evidence_level": chunk.evidence_level,
+                    "has_drug_dosing": getattr(chunk, "has_drug_dosing", False) or False,
+                    "quality_score": chunk.quality_score,
+                    "is_india_specific": chunk.is_india_specific,
+                }
+
+                # Convert sparse_vec (dict with indices/values) to SparseVector
+                if isinstance(sparse_vec, dict):
+                    sv = SparseVector.from_index_values(
+                        indices=[int(i) for i in sparse_vec.get("indices", [])],
+                        values=[float(v) for v in sparse_vec.get("values", [])],
+                    )
+                else:
+                    sv = sparse_vec  # already a SparseVector
+
+                # Convert dense_emb to list
+                dense_list = dense_emb.tolist() if hasattr(dense_emb, "tolist") else list(dense_emb)
+
+                points.append(VectorPoint(
+                    point_id=point_id,
+                    dense_vector=dense_list,
+                    sparse_vector=sv,
+                    payload=payload,
+                ))
+
+            # Upsert to Milvus
+            try:
+                indexed = self.indexer.store.upsert_points(
+                    points,
+                    collection_name=self.settings.vector_collection_v2,
+                    batch_size=100,
+                )
+            except Exception as e:
+                logger.error("[pipeline:scraped] Milvus upsert failed: %s", e)
+                for doc in docs_for_batch:
+                    await self._store_to_dead_letter(
+                        Path(doc.get("url", "/")),
+                        ERROR_TYPE_INDEX,
+                        f"Milvus upsert failed: {e}",
+                        retry_count=1,
+                    )
+                summary["files_failed"] += len(docs_for_batch)
+                continue
+
+            # Store to MongoDB — convert ChunkRecord to a dict that store_chunks can handle
+            # store_chunks expects objects with .chunk_id, .doc_id, .chunk_type, .section_title,
+            # .text, .char_count, .token_estimate, .chunk_index, .total_chunks, .metadata
+            mongo_chunks: list[Any] = []
+            for chunk in chunks_for_batch:
+                chunk_id = f"{chunk.document_id}-c{chunk.chunk_index:03d}"
+                # Create a simple namespace object with the expected fields
+                class _ChunkProxy:
+                    pass
+                proxy = _ChunkProxy()
+                proxy.chunk_id = chunk_id
+                proxy.doc_id = chunk.document_id
+                proxy.chunk_type = getattr(chunk, "section", "body") or "body"
+                proxy.section_title = getattr(chunk, "section", "") or ""
+                proxy.text = chunk.chunk_text
+                proxy.char_count = chunk.char_count
+                proxy.token_estimate = chunk.token_estimate
+                proxy.chunk_index = chunk.chunk_index
+                proxy.total_chunks = len(chunks_for_batch)
+                proxy.metadata = {
+                    "source_type": chunk.source_type,
+                    "title": chunk.title,
+                    "india_relevant": chunk.is_india_specific,
+                    "indian_source": getattr(chunk, "indian_source", False) or False,
+                    "trust_tier": getattr(chunk, "trust_tier", 3),
+                    "evidence_level": chunk.evidence_level,
+                    "quality_score": chunk.quality_score,
+                    "parser_version": chunk.parser_version,
+                    "also_indexed_in": getattr(chunk, "also_indexed_in", []),
+                }
+                mongo_chunks.append(proxy)
+
+            try:
+                for doc, enriched in zip(docs_for_batch, enriched_list):
+                    await self.mongo.store_document(doc, enriched)
+                await self.mongo.store_chunks(mongo_chunks)
+            except Exception as e:
+                logger.error("[pipeline:scraped] MongoDB storage failed: %s", e)
+                summary["files_failed"] += len(docs_for_batch)
+                continue
+
+            summary["documents_stored"] += len(docs_for_batch)
+            summary["chunks_created"] += len(chunks_for_batch)
+            summary["chunks_indexed"] += indexed
+
+            logger.info(
+                "[pipeline:scraped] Batch %d complete: docs=%d chunks=%d indexed=%d",
+                batch_index, len(docs_for_batch), len(chunks_for_batch), indexed,
+            )
+
+        # Record run in monitor
+        try:
+            await self.monitor.record_run(
+                source=source,
+                run_started_at=run_started_at,
+                summary=summary,
+            )
+        except Exception as e:
+            logger.debug("[pipeline:scraped] Monitor record failed: %s", e)
+
+        logger.info(
+            "[pipeline:scraped] Done: %s", summary,
+        )
+        return summary
+
     async def reprocess_dead_letter(
         self,
         error_type: str | None = None,
