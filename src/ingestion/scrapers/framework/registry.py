@@ -42,6 +42,7 @@ def _import_all_sources() -> None:
         try:
             __import__(module_name)
         except Exception as e:
+            # Source may have optional deps; log and continue
             import loguru
             loguru.logger.debug(f"[registry] could not import {module_name}: {e}")
 
