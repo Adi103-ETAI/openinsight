@@ -20,11 +20,25 @@ def _import_all_sources() -> None:
         return
     _SOURCES_IMPORTED = True
     # Import all source modules — order doesn't matter, each registers itself
-    try:
-        import src.ingestion.scrapers.sources.pubmed  # noqa: F401
-    except Exception:
-        pass  # source may have optional deps; ignore
-    # Other sources added in Phases 1-5
+    # Phase 0.5: PubMed
+    # Phase 1: IndMED, Medknow, PMC India
+    # Phase 2: StatPearls, NCBI Bookshelf, NMC curriculum, Govt manuals (NTEP/NVBDCP/NHM/NPCDS)
+    for module_name in [
+        "src.ingestion.scrapers.sources.pubmed",
+        "src.ingestion.scrapers.sources.indmed",
+        "src.ingestion.scrapers.sources.medknow",
+        "src.ingestion.scrapers.sources.pmc_india",
+        "src.ingestion.scrapers.sources.statpearls",
+        "src.ingestion.scrapers.sources.ncbi_bookshelf",
+        "src.ingestion.scrapers.sources.nmc_curriculum",
+        "src.ingestion.scrapers.sources.govt_manuals",
+    ]:
+        try:
+            __import__(module_name)
+        except Exception as e:
+            # Source may have optional deps; log and continue
+            import loguru
+            loguru.logger.debug(f"[registry] could not import {module_name}: {e}")
 
 
 def list_sources() -> list[str]:
