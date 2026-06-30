@@ -323,6 +323,139 @@ async def discover_pmc_india(
         await scraper.close()
 
 
+async def discover_statpearls(
+    max_results: int,
+    discover_only: bool,
+    limit: int | None = None,
+) -> int:
+    """Discover + ingest StatPearls clinical overviews."""
+    from src.ingestion.scrapers import get_scraper
+    from src.ingestion.parsers.statpearls_v2 import StatPearlsParser
+
+    scraper = get_scraper("statpearls")
+    parser = StatPearlsParser()
+    pipeline = None
+
+    if not discover_only:
+        from src.ingestion.pipeline import IngestionPipeline
+        pipeline = IngestionPipeline()
+
+    try:
+        jobs = await scraper.discover(max_results=max_results)
+        if limit:
+            jobs = jobs[:limit]
+        logger.info(f"[statpearls] {len(jobs)} articles discovered")
+
+        if not discover_only and jobs:
+            parsed_docs = []
+            for job in jobs:
+                scraped = await scraper.fetch_one(job)
+                if scraped:
+                    record, chunks = parser.parse(scraped)
+                    if chunks:
+                        parsed_docs.append((record, chunks))
+            if parsed_docs:
+                result = await pipeline.ingest_scraped_documents(
+                    documents=parsed_docs,
+                    source="statpearls",
+                )
+                logger.info(f"[statpearls] ingestion result: {result}")
+                return result.get("documents_stored", 0)
+            return 0
+        return len(jobs)
+    finally:
+        await scraper.close()
+
+
+async def discover_ncbi_bookshelf(
+    max_per_collection: int,
+    discover_only: bool,
+    limit: int | None = None,
+) -> int:
+    """Discover + ingest NCBI Bookshelf (GeneReviews + Medical Genetics)."""
+    from src.ingestion.scrapers import get_scraper
+    from src.ingestion.parsers.ncbi_bookshelf import NCBIBookshelfParser
+
+    scraper = get_scraper("ncbi_bookshelf")
+    parser = NCBIBookshelfParser()
+    pipeline = None
+
+    if not discover_only:
+        from src.ingestion.pipeline import IngestionPipeline
+        pipeline = IngestionPipeline()
+
+    try:
+        jobs = await scraper.discover(max_per_collection=max_per_collection)
+        if limit:
+            jobs = jobs[:limit]
+        logger.info(f"[bookshelf] {len(jobs)} articles discovered")
+
+        if not discover_only and jobs:
+            parsed_docs = []
+            for job in jobs:
+                scraped = await scraper.fetch_one(job)
+                if scraped:
+                    record, chunks = parser.parse(scraped)
+                    if chunks:
+                        parsed_docs.append((record, chunks))
+            if parsed_docs:
+                result = await pipeline.ingest_scraped_documents(
+                    documents=parsed_docs,
+                    source="ncbi_bookshelf",
+                )
+                logger.info(f"[bookshelf] ingestion result: {result}")
+                return result.get("documents_stored", 0)
+            return 0
+        return len(jobs)
+    finally:
+        await scraper.close()
+
+
+async def discover_nmc_curriculum(
+    max_results: int,
+    discover_only: bool,
+    limit: int | None = None,
+) -> int:
+    """Discover NMC curriculum PDFs (PDFs are parsed by pipeline, not by us)."""
+    from src.ingestion.scrapers import get_scraper
+
+    scraper = get_scraper("nmc_curriculum")
+    try:
+        jobs = await scraper.discover(max_results=max_results)
+        if limit:
+            jobs = jobs[:limit]
+        logger.info(f"[nmc] {len(jobs)} curriculum PDFs discovered")
+        if not discover_only and jobs:
+            logger.info(f"[nmc] PDF ingestion requires GROBID — pipeline.ingest_directory() can be used on /tmp/nmc_pdfs/")
+            # Note: NMC PDFs need GROBID parsing, not the scraped_documents path.
+            # The user can download the PDFs and run ingest_directory() on them.
+        return len(jobs)
+    finally:
+        await scraper.close()
+
+
+async def discover_govt_manuals(
+    programme: str,
+    max_results: int,
+    discover_only: bool,
+    limit: int | None = None,
+) -> int:
+    """Discover government programme manuals (NTEP, NVBDCP, NHM, NPCDS)."""
+    from src.ingestion.scrapers import get_scraper
+
+    scraper = get_scraper(programme)
+    try:
+        jobs = await scraper.discover(max_results=max_results)
+        if limit:
+            jobs = jobs[:limit]
+        logger.info(f"[{programme}] {len(jobs)} guideline PDFs discovered")
+        if not discover_only and jobs:
+            logger.info(f"[{programme}] PDF ingestion requires GROBID — use pipeline.ingest_directory()")
+        return len(jobs)
+    finally:
+        await scraper.close()
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Seed Indian medical journals (Phase 1 — Layer 2)",
@@ -331,7 +464,14 @@ async def main() -> int:
     )
     parser.add_argument(
         "--source",
-        choices=["pubmed", "indmed", "medknow", "pmc_india", "all"],
+        choices=[
+            # Phase 1
+            "pubmed", "indmed", "medknow", "pmc_india",
+            # Phase 2
+            "statpearls", "ncbi_bookshelf", "nmc_curriculum",
+            "ntep", "nvbdcp", "nhm", "npcds",
+            "all",
+        ],
         default="all",
         help="Which source to ingest from (default: all)",
     )
@@ -414,10 +554,43 @@ async def main() -> int:
 
     if args.source in ("pmc_india", "all"):
         if not args.limit or total < args.limit:
-            logger.info("[4/4] PMC India — Full-text with Indian affiliations")
+            logger.info("[4/8] PMC India — Full-text with Indian affiliations")
             remaining = args.limit - total if args.limit else None
             count = await discover_pmc_india(args.specialty, args.max_results, args.discover_only, limit=remaining)
             total += count
+
+    # Phase 2 sources
+    if args.source in ("statpearls", "all"):
+        if not args.limit or total < args.limit:
+            logger.info("[5/8] StatPearls — Peer-reviewed clinical overviews")
+            remaining = args.limit - total if args.limit else None
+            count = await discover_statpearls(args.max_results, args.discover_only, limit=remaining)
+            total += count
+
+    if args.source in ("ncbi_bookshelf", "all"):
+        if not args.limit or total < args.limit:
+            logger.info("[6/8] NCBI Bookshelf — GeneReviews + Medical Genetics")
+            remaining = args.limit - total if args.limit else None
+            count = await discover_ncbi_bookshelf(args.max_per_journal, args.discover_only, limit=remaining)
+            total += count
+
+    if args.source in ("nmc_curriculum", "all"):
+        if not args.limit or total < args.limit:
+            logger.info("[7/8] NMC Curriculum — Competency frameworks")
+            remaining = args.limit - total if args.limit else None
+            count = await discover_nmc_curriculum(args.max_results, args.discover_only, limit=remaining)
+            total += count
+
+    if args.source in ("ntep", "nvbdcp", "nhm", "npcds", "all"):
+        if not args.limit or total < args.limit:
+            logger.info("[8/8] Government manuals — NTEP, NVBDCP, NHM, NPCDS")
+            programmes = ["ntep", "nvbdcp", "nhm", "npcds"] if args.source == "all" else [args.source]
+            for prog in programmes:
+                if args.limit and total >= args.limit:
+                    break
+                remaining = args.limit - total if args.limit else None
+                count = await discover_govt_manuals(prog, args.max_results, args.discover_only, limit=remaining)
+                total += count
 
     logger.info("-" * 70)
     logger.info(f"Total articles discovered: {total}")
