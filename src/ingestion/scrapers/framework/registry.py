@@ -19,10 +19,12 @@ def _import_all_sources() -> None:
     if _SOURCES_IMPORTED:
         return
     _SOURCES_IMPORTED = True
-    # Import all source modules — order doesn't matter, each registers itself
+    # Import all source modules — each registers itself via @register_source
     # Phase 0.5: PubMed
     # Phase 1: IndMED, Medknow, PMC India
     # Phase 2: StatPearls, NCBI Bookshelf, NMC curriculum, Govt manuals (NTEP/NVBDCP/NHM/NPCDS)
+    # Phase 3: CDSCO, CTRI, PvPI (NFI parser exists but no scraper — needs PDF access)
+    # Phase 4: Specialty societies (RSSDI, CSI, ISCCM, IAP, FOGSI, AIOS, ISN) — pending merge
     for module_name in [
         "src.ingestion.scrapers.sources.pubmed",
         "src.ingestion.scrapers.sources.indmed",
@@ -32,6 +34,11 @@ def _import_all_sources() -> None:
         "src.ingestion.scrapers.sources.ncbi_bookshelf",
         "src.ingestion.scrapers.sources.nmc_curriculum",
         "src.ingestion.scrapers.sources.govt_manuals",
+        "src.ingestion.scrapers.sources.cdsco",
+        "src.ingestion.scrapers.sources.ctri",
+        "src.ingestion.scrapers.sources.pvpi",
+        # Phase 4 specialty societies — uncomment after phase4-guidelines merges
+        # "src.ingestion.scrapers.sources.specialty_societies",
     ]:
         try:
             __import__(module_name)
