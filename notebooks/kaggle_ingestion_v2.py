@@ -23,13 +23,13 @@ Usage locally (for testing):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-
 # === CELL 1: Configuration ================================================
 
 # Sources to ingest (pick from list_sources())
