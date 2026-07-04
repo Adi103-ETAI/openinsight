@@ -246,7 +246,7 @@ def load_checkpoint() -> dict:
         return json.load(f)
 
 def save_checkpoint(checkpoint: dict) -> None:
-    """Save checkpoint (called after every batch)."""
+    """Save checkpoint (called after each source completes in this script)."""
     Path(CHECKPOINT_FILE).parent.mkdir(parents=True, exist_ok=True)
     with open(CHECKPOINT_FILE, "w") as f:
         json.dump(checkpoint, f, indent=2, default=str)
