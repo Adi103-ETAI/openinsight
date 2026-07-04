@@ -75,20 +75,17 @@ LIMIT_PER_SOURCE = 500  # 30 journals × 500 = 15K articles
 
 ## Checkpointing
 
-The notebook writes `/kaggle/working/checkpoint.json` after every batch:
-```json
+The script writes `/kaggle/working/checkpoint.json` after each source completes:
+
+~~~json
 {
-  "source": "pubmed",
-  "journal_index": 5,
-  "articles_ingested": 2340,
-  "articles_failed": 12,
-  "last_url": "https://eutils.ncbi.nlm.nih.gov/...",
-  "timestamp": "2026-07-03T14:30:00Z"
+  "completed_sources": ["pubmed", "statpearls"],
+  "current_source": "cdsco",
+  "current_offset": 0
 }
-```
+~~~
 
-If a session dies, the next session reads this file and resumes from `journal_index`.
-
+If a session dies, the next session reads this file, skips `completed_sources`, and resumes from the next source.
 ## GROBID on Kaggle
 
 GROBID is a Java application. We:
