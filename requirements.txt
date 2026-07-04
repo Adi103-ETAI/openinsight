@@ -1,58 +1,67 @@
-# API
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-python-dotenv==1.0.1
-pydantic==2.9.2
-pydantic-settings==2.5.2
+# OpenInsight — Backend Dependencies
+#
+# Pins are intentionally loose where Kaggle pre-installs its own versions
+# (torch, transformers, numpy). Tight pins are kept only where a specific
+# API contract is required (fastapi, pydantic).
+#
+# Install: pip install -r requirements.txt
 
-# Ingestion & parsing
-pymongo==4.9.1
-motor==3.6.0
-pypdf2==3.0.1
-pdfplumber==0.11.4
-beautifulsoup4==4.12.3
-requests==2.32.3
-httpx[http2]==0.27.2
-lxml==5.3.0
-biopython==1.84
-reportlab>=4.2.0
-python-docx>=1.1.0
-trafilatura>=1.12.0
+# === API server ===
+fastapi>=0.110,<0.120
+uvicorn[standard]>=0.30,<0.40
+python-dotenv>=1.0,<2.0
+pydantic>=2.5,<3.0
+pydantic-settings>=2.1,<3.0
 
-# Async ingestion workers
-celery>=5.4,<6.0
+# === Ingestion & parsing ===
+pymongo>=4.6,<5.0
+motor>=3.3,<4.0
+pypdf2>=3.0,<4.0
+pdfplumber>=0.11,<0.12
+beautifulsoup4>=4.12,<5.0
+requests>=2.31,<3.0
+httpx[http2]>=0.27,<1.0
+lxml>=5.0,<6.0
+biopython>=1.80,<2.0
+reportlab>=4.0,<5.0
+python-docx>=1.1,<2.0
+trafilatura>=1.6,<2.0
 
-# Embeddings
-sentence-transformers==3.1.1
-transformers==4.45.1
-torch==2.4.1
-numpy==1.26.4
+# === Async ingestion workers ===
+celery>=5.3,<6.0
 
-# Vector DB
-pymilvus>=2.5,<2.6
+# === Embeddings / ML ===
+# DO NOT pin torch — Kaggle pre-installs a CUDA-specific build.
+# On local CPU-only machines, pip installs the CPU build automatically.
+sentence-transformers>=3.0,<4.0
+transformers>=4.40,<5.0
+numpy>=1.24,<2.0
 
-# LLM & RAG
-langchain==0.3.3
-langchain-community==0.3.2
-openai==1.51.0
+# === Vector DB ===
+pymilvus>=2.5,<3.0
 
-# Caching
-redis==5.1.1
+# === LLM & RAG ===
+langchain>=0.3,<0.4
+langchain-community>=0.3,<0.4
+openai>=1.40,<2.0
 
-# Utilities
-tqdm==4.66.5
-loguru==0.7.2
-tenacity==8.5.0
-python-slugify==8.0.4
-pytesseract==0.3.13
-Pillow>=10.0.0
-scispacy==0.5.3
+# === Caching ===
+redis>=5.0,<6.0
 
-# Dev
-pytest==8.3.3
-pytest-asyncio==0.24.0
-black==24.10.0
-isort==5.13.2
-mypy>=1.13.0
-types-redis>=4.6.0
-types-requests>=2.32.0
+# === Utilities ===
+tqdm>=4.65,<5.0
+loguru>=0.7,<1.0
+tenacity>=8.2,<9.0
+python-slugify>=8.0,<9.0
+pytesseract>=0.3.10,<0.4
+Pillow>=10.0,<12.0
+scispacy>=0.5.0,<0.6.0
+
+# === Dev ===
+pytest>=8.0,<9.0
+pytest-asyncio>=0.23,<0.25
+black>=24.0,<25.0
+isort>=5.12,<6.0
+mypy>=1.10,<2.0
+types-redis>=4.6
+types-requests>=2.31

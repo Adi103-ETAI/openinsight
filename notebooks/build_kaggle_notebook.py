@@ -42,25 +42,11 @@ md("""# OpenInsight — Kaggle Ingestion
 Run cells top-to-bottom. Edit the **Configuration** cell (cell 5) to pick sources + limits.
 """)
 
-# === Cell 1: Install dependencies ===
-md("## 1. Install dependencies")
+# === Cell 1: Clone repo ===
+md("""## 1. Clone the OpenInsight repo
 
-code("""# Install Python deps not pre-installed on Kaggle
-# Using !pip so output is visible in the notebook
-!pip install -q pymilvus>=2.5,<2.6 motor==3.6.0 sentence-transformers==3.1.1 \\
-    transformers==4.45.1 biopython==1.84 pdfplumber==0.11.4 \\
-    beautifulsoup4==4.12.3 lxml==5.3.0 loguru==0.7.2 tenacity==8.5.0 \\
-    trafilatura>=1.12.0 httpx==0.27.2
-
-print("✓ Dependencies installed")
-import torch
-print(f"✓ PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"  GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB VRAM)")
+Clones the `re-insight` branch which has all phases (0-4) merged.
 """)
-
-# === Cell 2: Clone repo ===
-md("## 2. Clone the OpenInsight repo")
 
 code("""import os
 from pathlib import Path
@@ -76,6 +62,31 @@ else:
     !git clone --branch {REPO_BRANCH} --depth 1 https://github.com/Adi103-ETAI/openinsight.git {REPO_DIR}
 
 print(f"\\n✓ Repo ready at {REPO_DIR}")
+""")
+
+# === Cell 2: Install dependencies ===
+md("""## 2. Install dependencies
+
+Installs from `notebooks/kaggle_requirements.txt`. Key principle: **do NOT pin torch** — Kaggle pre-installs a CUDA-specific build, and pinning it causes conflicts. The requirements file uses loose pins (`>=3.0` for sentence-transformers, `>=4.40` for transformers) so the pre-installed Kaggle versions are kept.
+""")
+
+code("""# Install dependencies from the requirements file in the repo
+# The kaggle_requirements.txt has loose pins (no torch pin) to avoid conflicts
+!pip install -q -r {REPO_DIR}/notebooks/kaggle_requirements.txt 2>&1 | tail -5
+
+import torch
+print(f"\\n✓ PyTorch {torch.__version__}")
+print(f"  CUDA available: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"  GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB VRAM)")
+
+# Verify key packages
+import sentence_transformers
+import pymilvus
+import motor
+print(f"\\n✓ sentence-transformers {sentence_transformers.__version__}")
+print(f"✓ pymilvus {pymilvus.__version__}")
+print(f"✓ motor {motor.__version__}")
 """)
 
 # === Cell 3: Load secrets + set env ===
