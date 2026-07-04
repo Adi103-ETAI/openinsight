@@ -14,7 +14,16 @@ current_cell_lines = []
 current_cell_num = None
 current_cell_type = "code"
 
+in_module_docstring = False
+
 for line in py_content.splitlines():
+    # Skip the entire module docstring (not just the opening delimiter)
+    if current_cell_num is None and (line.startswith('"""') or line.startswith("'''")):
+        in_module_docstring = not in_module_docstring
+        continue
+    if in_module_docstring and current_cell_num is None:
+        continue
+
     if line.startswith("# === CELL"):
         if current_cell_lines:
             cells_raw.append({
@@ -24,14 +33,7 @@ for line in py_content.splitlines():
             })
         current_cell_num = line
         current_cell_lines = []
-        # Extract cell type from the header
-        if "Configuration" in line or "Configuration" in line:
-            current_cell_type = "code"
-        else:
-            current_cell_type = "code"
-    elif line.startswith('"""') and current_cell_num is None:
-        # Module docstring — skip
-        continue
+        current_cell_type = "code"
     else:
         current_cell_lines.append(line)
 
