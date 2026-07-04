@@ -302,24 +302,37 @@ async def ingest_from_source(
                     else:
                         total_failed += 1
                 else:
-                    # No parser (e.g., PubMed — handled differently)
-                    # Create a minimal DocumentRecord
-                    from src.ingestion.document_db import DocumentRecord
+                    # No dedicated parser available yet — create a minimal DocumentRecord
+                    # plus a single ChunkRecord so ingest_scraped_documents() doesn't skip it.
+                    from src.ingestion.document_db import ChunkRecord, DocumentRecord
+
+                    content = scraped.content.decode("utf-8", errors="replace") if scraped.content else ""
                     record = DocumentRecord(
                         source_type=source_name,
                         title=scraped.title or "Untitled",
-                        content=scraped.content.decode("utf-8", errors="replace")[:50000] if scraped.content else "",
+                        content=content[:50000],
                         url=scraped.url,
                         doi=scraped.doi,
                         published_date=scraped.pubdate,
                         journal=scraped.journal,
                         is_india_specific=True,
                         parser_version=f"{source_name}-scraped-v1",
-                        content_hash=hashlib.sha256(scraped.content or b"").hexdigest()[:16] if scraped.content else "",
                         condition_tags=[],
                         specialty_tags=[],
                     )
-                    parsed_docs.append((record, []))
+
+                    chunk_text = record.content[:8000]
+                    if len(chunk_text.strip()) < 80:
+                        total_failed += 1
+                    else:
+                        chunk = ChunkRecord(
+                            document_id="",
+                            source_type=source_name,
+                            title=record.title,
+                            chunk_text=chunk_text,
+                            chunk_index=0,
+                        )
+                        parsed_docs.append((record, [chunk]))
 
                 # Batch ingest every BATCH_SIZE docs
                 if len(parsed_docs) >= BATCH_SIZE:
