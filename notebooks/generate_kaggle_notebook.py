@@ -1,75 +1,84 @@
 #!/usr/bin/env python3
-"""Generate kaggle_ingestion_v2.ipynb from the .py script."""
+"""Generate kaggle_ingestion_v2.ipynb from the .py script.
+
+The .py file uses '# === CELL N ===' markers to delimit cells.
+The module-level docstring (between the first pair of triple-quotes) is
+excluded from the notebook — it's documentation for the .py file, not
+notebook content.
+"""
 import json
-import sys
 from pathlib import Path
 
-# Read the .py file
 py_path = Path(__file__).parent / "kaggle_ingestion_v2.py"
 py_content = py_path.read_text()
 
-# Split into cells by the === CELL N === markers
-cells_raw = []
-current_cell_lines = []
-current_cell_num = None
-current_cell_type = "code"
+# --- Parse the .py file into cells -----------------------------------------
 
-in_module_docstring = False
+cells_raw: list[tuple[str | None, str]] = []  # (cell_marker, source)
+current_lines: list[str] = []
+current_marker: str | None = None
 
-for line in py_content.splitlines():
-    # Skip the entire module docstring (not just the opening delimiter)
-    if current_cell_num is None and (line.startswith('"""') or line.startswith("'''")):
-        in_module_docstring = not in_module_docstring
-        continue
-    if in_module_docstring and current_cell_num is None:
-        continue
+# Skip the module docstring (everything between the first pair of """)
+lines = py_content.splitlines()
+i = 0
+# Skip leading blank lines
+while i < len(lines) and not lines[i].strip():
+        i += 1
+# Skip module docstring if present
+if i < len(lines) and lines[i].strip().startswith('"""'):
+        # Find the closing """
+        if lines[i].count('"""') >= 2:
+                # Single-line docstring
+                i += 1
+        else:
+                # Multi-line docstring — find closing
+                i += 1
+                while i < len(lines):
+                        if '"""' in lines[i]:
+                                i += 1
+                                break
+                        i += 1
 
-    if line.startswith("# === CELL"):
-        if current_cell_lines:
-            cells_raw.append({
-                "num": current_cell_num,
-                "type": current_cell_type,
-                "source": "\n".join(current_cell_lines),
-            })
-        current_cell_num = line
-        current_cell_lines = []
-        current_cell_type = "code"
-    else:
-        current_cell_lines.append(line)
+# Now parse cells
+for line in lines[i:]:
+        if line.startswith("# === CELL"):
+                if current_lines:
+                        cells_raw.append((current_marker, "\n".join(current_lines)))
+                current_marker = line
+                current_lines = []
+        else:
+                current_lines.append(line)
 
-if current_cell_lines:
-    cells_raw.append({
-        "num": current_cell_num,
-        "type": current_cell_type,
-        "source": "\n".join(current_cell_lines),
-    })
+if current_lines:
+        cells_raw.append((current_marker, "\n".join(current_lines)))
 
-# Build the notebook
+# --- Build the notebook ----------------------------------------------------
+
 notebook = {
-    "nbformat": 4,
-    "nbformat_minor": 4,
-    "metadata": {
-        "kernelspec": {
-            "display_name": "Python 3",
-            "language": "python",
-            "name": "python3",
+        "nbformat": 4,
+        "nbformat_minor": 4,
+        "metadata": {
+                "kernelspec": {
+                        "display_name": "Python 3",
+                        "language": "python",
+                        "name": "python3",
+                },
+                "language_info": {
+                        "name": "python",
+                        "version": "3.10.0",
+                },
+                "kaggle": {
+                        "accelerator": "gpu-t4x2",
+                        "dataSources": [],
+                        "isGpuEnabled": True,
+                        "isInternetEnabled": True,
+                        "language": "python",
+                },
         },
-        "language_info": {
-            "name": "python",
-            "version": "3.10.0",
-        },
-        "kaggle": {
-            "accelerator": "gpu-t4x2",
-            "dataSources": [],
-            "isGpuEnabled": True,
-            "isInternetEnabled": True,
-            "language": "python",
-        },
-    },
-    "cells": [],
+        "cells": [],
 }
 
-# Add a markdown intro cell
+# Intro markdown cell
 intro_md = """# OpenInsight — Kaggle Ingestion
 
 **Purpose**: Run the OpenInsight ingestion pipeline on Kaggle's free GPU to populate Milvus + MongoDB with indexed medical content.
@@ -90,23 +99,24 @@ See `notebooks/KAGGLE_INGESTION_README.md` for full documentation.
 """
 
 notebook["cells"].append({
-    "cell_type": "markdown",
-    "metadata": {},
-    "source": intro_md,
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": intro_md,
 })
 
-# Add cells from the .py file
-for cell in cells_raw:
-    if cell["source"].strip():
+# Add code cells from the .py file
+for marker, source in cells_raw:
+        if not source.strip():
+                continue  # skip empty cells
         notebook["cells"].append({
-            "cell_type": "code",
-            "metadata": {},
-            "execution_count": None,
-            "outputs": [],
-            "source": cell["source"],
+                "cell_type": "code",
+                "metadata": {},
+                "execution_count": None,
+                "outputs": [],
+                "source": source,
         })
 
 # Write the notebook
 ipynb_path = py_path.with_suffix(".ipynb")
-ipynb_path.write_text(json.dumps(notebook, indent=1))
+ipynb_path.write_text(json.dumps(notebook, indent=1) + "\n")
 print(f"✓ Generated {ipynb_path} ({len(notebook['cells'])} cells)")
