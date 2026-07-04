@@ -275,8 +275,9 @@ async def ingest_from_source(
         # Discover URLs
         if source_name == "pubmed" and journals:
             jobs = []
+            per_journal = max(1, limit // len(journals))
             for journal in journals:
-                j = await scraper.discover_by_journal(journal, max_results=limit // len(journals))
+                j = await scraper.discover_by_journal(journal, max_results=per_journal)
                 jobs.extend(j)
         else:
             jobs = await scraper.discover(max_results=limit)
