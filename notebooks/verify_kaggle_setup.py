@@ -35,7 +35,11 @@ def main() -> int:
     # --- 1. Environment ---
     print("1. Environment")
     is_kaggle = os.path.exists("/kaggle")
-    all_ok &= check("Kaggle environment", is_kaggle, "running on Kaggle" if is_kaggle else "NOT on Kaggle (running locally — some checks will skip)")
+    check(
+        "Kaggle environment",
+        is_kaggle,
+        "running on Kaggle" if is_kaggle else "NOT on Kaggle (running locally — some checks will skip)",
+    )
 
     # --- 2. GPU ---
     print("\n2. GPU")
