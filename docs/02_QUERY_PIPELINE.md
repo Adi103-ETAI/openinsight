@@ -14,7 +14,7 @@
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         QUERY SANITIZATION                                  │
-│  Regex filtering: XSS patterns, SQL injection, control characters           │
+│  Validation: strip control chars + normalize whitespace; reject XSS/SQL patterns │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
