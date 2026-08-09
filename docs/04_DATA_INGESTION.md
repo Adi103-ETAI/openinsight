@@ -13,7 +13,7 @@ The ingestion pipeline transforms raw source documents into searchable vector em
 - **OCR fallback**: Scanned PDFs automatically detected and processed via pytesseract
 - **Checkpoint/resume**: Long-running jobs can be paused and resumed via checkpoint files
 - **Zilliz verification**: Post-upsert count validation (expected vs actual) for data integrity
-- **GROBID 0.8.0**: Configurable timeouts, retries (exponential backoff), and health check with fallback to ICMRParser
+- **GROBID 0.9.0**: Configurable timeouts, retries (exponential backoff), health check (`/api/health` endpoint) with fallback to ICMRParser
 - **Quality scoring**: High/low value pattern detection for document quality assessment
 - **Deduplication**: Content hash + title similarity (threshold 0.9) to prevent duplicate indexing
 
@@ -90,7 +90,7 @@ These can be reprocessed later by querying the dead letter queue and re-submitti
 
 | Parser | File | Input Format | Source | Key Details |
 |--------|------|-------------|--------|-------------|
-| **GROBID** | `grobid.py` | PDF → TEI XML | Any academic PDF | Primary PDF parser. GROBID 0.8.0 with configurable timeout (120s default), max retries (3), exponential backoff. Falls back to ICMRParser if GROBID unavailable. |
+| **GROBID** | `grobid.py` | PDF → TEI XML | Any academic PDF | Primary PDF parser. GROBID 0.9.0 with configurable timeout (120s default), max retries (3), exponential backoff. Health check uses `/api/health` endpoint (0.9.0+). Falls back to ICMRParser if GROBID unavailable. |
 | **ICMR** | `icmr.py` | PDF → text | ICMR guidelines | pdfplumber-based extraction for Indian clinical guidelines. |
 | **PubMed** | `pubmed.py` | XML | PubMed Central | Biopython Entrez + XML parsing for research articles. |
 | **Cochrane** | `cochrane.py` | PDF/XML | Cochrane Library | Systematic review extraction. |

@@ -16,7 +16,7 @@ A medical RAG system that answers clinical questions with cited, evidence-based 
 **Four API endpoints:**
 - **Search** (`/search`) — Fast single-pass RAG with cache, HyDE, fusion, rerank, MMR
 - **Search Document** (`/search/document`) — RAG + PDF/DOCX export
-- **DeepInsights** (`/deep-insights`) — Multi-agent pipeline (5 agents) for complex cases
+- **DeepInsights** (`/deep-insights`) — Multi-agent pipeline (7 agents) for complex cases
 - **Vault** (`/vault`) — Research vault for saving and organizing citations
 - **Reports** (`/reports`) — Clinical summary and evidence review generation
 
@@ -134,7 +134,7 @@ src/
 │   └── vector/         # vector_store.py (legacy compat)
 ├── ingestion/          # Data pipeline
 │   ├── pipeline.py     # Main orchestration
-│   ├── parsers/        # PDF/XML parsers (GROBID 0.8.0, ICMR, PubMed, OCR, etc.)
+│   ├── parsers/        # PDF/XML parsers (GROBID 0.9.0, ICMR, PubMed, OCR, etc.)
 │   ├── llamaindex_integration.py  # Parent-child chunk retrieval
 │   └── ...             # tasks, scheduler, checkpoint, dedupe, quality, etc.
 ├── ml/                 # ML components
@@ -143,7 +143,7 @@ src/
 │   └── ner.py          # Named entity recognition + content classification
 ├── query/              # Query pipeline
 │   ├── search/         # RAG: cache, retriever, fusion, reranker, mmr, query_understanding, context_builder
-│   ├── deepinsight/    # Multi-agent: orchestrator + 5 agents (RAG, Web, Synthesis, Citation, DocGen)
+│   ├── deepinsight/    # Multi-agent: orchestrator + 7 agents (IntentRouter, QueryDecomposer, RAG, Web, Synthesis, Citation, DocGen)
 │   ├── validation/     # Answer validation: hallucination, citation, safety, confidence
 │   └── contradiction_detector.py
 ├── reports/            # Clinical report generation (PDF/DOCX)
@@ -171,7 +171,7 @@ src/
 |---------|-------|------|---------|
 | MongoDB | mongo:7 | 27017 | Document + chunk + vault storage |
 | Redis | redis:7-alpine | 6379 | Search cache + Celery broker |
-| GROBID | lfoppiano/grobid:0.8.0 | 8070 | PDF/XML parsing (4GB heap) |
+| GROBID | lfoppiano/grobid:0.9.0 | 8070 | PDF/XML parsing (4GB heap) |
 | Milvus | milvusdb/milvus:v2.5.4 | 19530 | Hybrid dense+sparse vector search |
 | etcd | quay.io/coreos/etcd:v3.5.5 | 2379 | Milvus metadata |
 | MinIO | minio/minio:RELEASE.2023-03-13 | 9000/9001 | Milvus object storage |
