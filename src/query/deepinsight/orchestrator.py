@@ -8,9 +8,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict
 
 from loguru import logger
 
@@ -48,6 +49,15 @@ def _sanitize_query(query: str) -> str:
 
 
 @dataclass
+class SubQueryResult:
+    """Result of a single sub-query execution."""
+    sub_query: Any  # SubQuery dataclass
+    chunks: list[dict] = field(default_factory=list)
+    answer: str = ""
+    error: str | None = None
+
+
+@dataclass
 class DeepInsightResponse:
     """Full response from the DeepInsight pipeline."""
     answer: str = ""
@@ -55,12 +65,17 @@ class DeepInsightResponse:
     sections: dict[str, str] = field(default_factory=dict)
     validation: dict[str, Any] = field(default_factory=dict)
     sub_queries: list[str] = field(default_factory=list)
+    sub_query_results: list[SubQueryResult] = field(default_factory=list)
     contradictions: list[dict] = field(default_factory=list)
     sources_used: dict[str, list] = field(default_factory=dict)
     cached: bool = False
     timed_out: bool = False
     synthesis_result: dict = field(default_factory=dict)
     citation_validation: dict = field(default_factory=dict)
+    # API-facing fields consumed by routes/deep_insights.py
+    confidence: float = 0.0
+    complexity_detected: str = "unknown"
+    processing_time_ms: float = 0.0
 
 
 class DeepInsightOrchestrator:
@@ -91,16 +106,25 @@ class DeepInsightOrchestrator:
         self.contradiction_detector = ContradictionDetector()
         self.cache = SearchCache()
 
-    async def process(self, query: str) -> DeepInsightResponse:
+    async def process(
+        self,
+        query: str,
+        top_k: int = 8,
+        force_deep: bool = False,
+    ) -> DeepInsightResponse:
         """
         Execute the full DeepInsight pipeline.
 
         Args:
             query: Raw user query
+            top_k: Number of chunks to retrieve per sub-query (default 8)
+            force_deep: Force deep multi-agent pipeline even for simple queries
 
         Returns:
             DeepInsightResponse with all fields populated
         """
+        start_ts = time.monotonic()
+
         # 1. Sanitize query
         try:
             sanitized = _sanitize_query(query)
@@ -113,7 +137,11 @@ class DeepInsightOrchestrator:
             cached = await self.cache.get_search_result(sanitized, None)
             if cached and "deepinsight" in cached:
                 logger.info(f"[DeepInsight] Cache hit for: {sanitized[:60]}...")
-                resp = DeepInsightResponse(**cached["deepinsight"])
+                # Filter to known dataclass fields to avoid TypeError on schema drift
+                cached_payload = cached["deepinsight"]
+                valid_fields = {f.name for f in fields(DeepInsightResponse)}
+                filtered = {k: v for k, v in cached_payload.items() if k in valid_fields}
+                resp = DeepInsightResponse(**filtered)
                 resp.cached = True
                 return resp
         except Exception as e:
@@ -122,6 +150,9 @@ class DeepInsightOrchestrator:
         # 3. Route intent
         routing = self.intent_router.route(sanitized)
         needs_web = routing.complexity in (QueryComplexity.COMPLEX, QueryComplexity.MEDIUM)
+        if force_deep:
+            needs_web = True
+            logger.info("[DeepInsight] force_deep=True — forcing deep multi-agent pipeline")
         logger.info(
             f"[DeepInsight] Routed: complexity={routing.complexity.value}, "
             f"intent={routing.detected_intent}, needs_web={needs_web}"
@@ -135,6 +166,13 @@ class DeepInsightOrchestrator:
         )
         sub_query_texts = [sq.query for sq in decomposition.sub_queries]
         metadata_filters = None  # RoutingDecision doesn't have metadata_filters yet
+
+        # Pre-populate sub_query_results from the decomposition so the API always
+        # has something to return even if RAG fails.
+        sub_query_results: list[SubQueryResult] = [
+            SubQueryResult(sub_query=sq, chunks=[], answer="", error=None)
+            for sq in decomposition.sub_queries
+        ]
 
         # 5. Parallel execution with timeout
         rag_result: RAGResult | None = None
@@ -160,12 +198,18 @@ class DeepInsightOrchestrator:
                 answer="Query timed out. Please try a more specific question.",
                 timed_out=True,
                 sub_queries=sub_query_texts,
+                sub_query_results=sub_query_results,
+                complexity_detected=routing.complexity.value,
+                processing_time_ms=(time.monotonic() - start_ts) * 1000.0,
             )
         except Exception as e:
             logger.error(f"[DeepInsight] Pipeline error: {e}")
             return DeepInsightResponse(
                 answer=f"Error processing query: {str(e)[:200]}",
                 sub_queries=sub_query_texts,
+                sub_query_results=sub_query_results,
+                complexity_detected=routing.complexity.value,
+                processing_time_ms=(time.monotonic() - start_ts) * 1000.0,
             )
 
         # 6. Contradiction detection
@@ -338,12 +382,19 @@ class DeepInsightOrchestrator:
                     for s in web_result.sources
                 ]
 
+        # Compute API-facing scalar fields
+        processing_time_ms = (time.monotonic() - start_ts) * 1000.0
+        confidence_score = 0.0
+        if isinstance(validation_result, dict):
+            confidence_score = float(validation_result.get("confidence_score", 0.0) or 0.0)
+
         response = DeepInsightResponse(
             answer=final_answer,
             citations=citations,
             sections=sections,
             validation=validation_result,
             sub_queries=sub_query_texts,
+            sub_query_results=sub_query_results,
             contradictions=contradictions,
             sources_used=sources_used,
             cached=False,
@@ -358,7 +409,10 @@ class DeepInsightOrchestrator:
                 "validation_complete": citation_result.validation_complete if citation_result else False,
                 "hallucination_detected": citation_result.hallucination_detected if citation_result else False,
                 "summary": citation_result.summary if citation_result else {}
-            } if citation_result else {}
+            } if citation_result else {},
+            confidence=confidence_score,
+            complexity_detected=routing.complexity.value,
+            processing_time_ms=processing_time_ms,
         )
 
         # 13. Write to cache
@@ -376,6 +430,9 @@ class DeepInsightOrchestrator:
                     "timed_out": False,
                     "synthesis_result": response.synthesis_result,
                     "citation_validation": response.citation_validation,
+                    "confidence": response.confidence,
+                    "complexity_detected": response.complexity_detected,
+                    "processing_time_ms": response.processing_time_ms,
                 }}
             )
         except Exception as e:

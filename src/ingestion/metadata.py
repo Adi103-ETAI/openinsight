@@ -196,11 +196,50 @@ class MetadataEnricherV2:
     }
 
     INDIAN_JOURNALS = [
-        "japi",
-        "journal of association of physicians of india",
-        "ijmr",
-        "indian heart journal",
-        "journal of indian medical association",
+        # General medicine
+        "japi", "journal of association of physicians of india",
+        "ijmr", "indian journal of medical research",
+        "nmji", "national medical journal of india",
+        "jima", "journal of the indian medical association",
+        "indian journal of medical sciences",
+        "med j armed forces india",
+        # Cardiology
+        "indian heart journal", "ihj",
+        # Anesthesia
+        "indian journal of anaesthesia", "ija",
+        # Pediatrics
+        "indian pediatrics", "indian paediatrics",
+        # Public health / community medicine
+        "indian journal of community medicine", "ijcm",
+        "indian journal of public health", "ijph",
+        # Dermatology
+        "indian journal of dermatology", "ijd",
+        # Psychiatry / neurology
+        "indian journal of psychiatry", "ijp",
+        "annals of indian academy of neurology", "aian",
+        # Pharmacology
+        "indian journal of pharmacology", "ijphar",
+        # Surgery / radiology / pathology
+        "indian journal of surgery", "ijs",
+        "indian journal of radiology and imaging", "ijri",
+        "indian journal of pathology and microbiology", "ijpm",
+        # Nephrology / endocrinology
+        "indian journal of nephrology", "ijn",
+        "indian journal of endocrinology and metabolism", "ijem",
+        # Gastroenterology
+        "indian journal of gastroenterology", "ijg",
+        # Microbiology
+        "indian journal of medical microbiology", "ijmm",
+        # Oncology
+        "indian journal of medical and paediatric oncology", "ijmpo",
+        # Palliative care
+        "indian journal of palliative care", "ijpc",
+        # Rheumatology / urology / obstetrics
+        "indian journal of rheumatology", "ijr",
+        "indian journal of urology", "iju",
+        # Postgrad medicine
+        "journal of postgraduate medicine", "jpm",
+        "journal of lab physicians", "jlp",
     ]
 
     RCT_TITLE_PATTERNS = [
