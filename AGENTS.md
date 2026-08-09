@@ -114,7 +114,7 @@ Hard File Locks — do not modify without explicit user instruction:
 | `src/config/` | `settings.py` (JSON + `.env` hybrid config), `logging_config.py` |
 | `src/constants/` | Shared magic values used across modules |
 | `src/data/` | MongoDB stores: `mongo/doc_store.py`, `mongo/vault_store.py`, `mongo/connection.py` |
-| `src/ingestion/` | Ingestion pipeline, Celery tasks, checkpointing, parsers (PubMed, ICMR, GROBID, OCR, WHO, CDC, etc.) |
+| `src/ingestion/` | Ingestion pipeline, Celery tasks, checkpointing, parsers (PubMed, ICMR, GROBID 0.8.0, OCR, WHO, CDC, StatPearls, Cochrane, etc.) |
 | `src/ml/` | Chunking (`chunking/chunker.py`), embeddings (`embedding/embedder.py`), NER (`ner.py`) |
 | `src/query/` | Search RAG (`search/`), DeepInsights agents (`deepinsight/`), validation, contradiction detection |
 | `src/reports/` | Clinical summary and evidence review generation, PDF rendering |

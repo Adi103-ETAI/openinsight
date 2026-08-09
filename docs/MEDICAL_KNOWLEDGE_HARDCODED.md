@@ -1,14 +1,14 @@
 # Medical Knowledge Hardcoded in Codebase
 
-This document lists all domain-specific medical knowledge that is hardcoded in the codebase. These are **intentional design decisions** - they're medical rules that should not be externalized to config files.
+> Last updated: August 2026
+
+This document lists all domain-specific medical knowledge that is hardcoded in the codebase. These are **intentional design decisions** — they're medical rules that should not be externalized to config files.
 
 ---
 
 ## 1. Intent Detection Patterns
 
 **File:** `src/query/search/query_understanding.py`
-
-> Note: This file is located at `src/query/search/query_understanding.py` (unchanged from original location)
 
 ### DIAGNOSTIC_PATTERNS
 ```python
@@ -64,7 +64,7 @@ MEDICAL_SYNONYMS = {
 
 ## 2. Complex Query Detection Patterns
 
-**File:** `src/query/agents/intent_router.py`
+**File:** `src/query/deepinsight/agents/intent_router.py`
 
 ### COMPLEX_PATTERNS
 ```python
