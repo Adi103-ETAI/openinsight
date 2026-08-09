@@ -212,8 +212,7 @@ Use DeepInsights for complex clinical queries that require:
 │    ],                                                                       │
 │    "confidence": 0.78,                                                      │
 │    "complexity_detected": "complex",                                        │
-│    "processing_time_ms": 4500,                                              │
-│    "mode": "deep_insights"                                                  │
+│    "processing_time_ms": 4500                                               │
 │  }                                                                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -222,10 +221,12 @@ Use DeepInsights for complex clinical queries that require:
 
 ## Agent System Detail
 
-### 5 Agents
+### 7 Agents
 
 | Agent | Class | File | LLM? | Key Behavior |
 |-------|-------|------|------|-------------|
+| **Intent Router** | `IntentRouter` | `agents/intent_router.py` | No | Deterministic complexity classification (SIMPLE/MEDIUM/COMPLEX) via regex pattern matching + entity count. Routes SIMPLE queries to `/search`. |
+| **Query Decomposer** | `QueryDecomposer` | `agents/query_decomposer.py` | Yes (fallback: rule-based) | LLM-based sub-query generation (3–6 sub-queries). Each sub-query has focus, priority, and metadata. |
 | **RAG Agent** | `RAGAgent` | `agents/rag_agent.py` | Yes | Full RAG per sub-query. Escalation detection when corpus insufficient. Confidence: 0.35 score + 0.30 coverage + 0.35 evidence. |
 | **Web Search Agent** | `WebSearchAgent` | `agents/web_search_agent.py` | Yes (Gemini Flash fallback) | 3-tier fetch (HTTP→CDP→Gemini). Medical trust filtering. Auto-discovers browser. Conflict detection. |
 | **Synthesis Agent** | `SynthesisAgent` | `agents/synthesis_agent.py` | Yes | Merges RAG + web. Conflict resolution. Only runs when BOTH return results. |
@@ -395,6 +396,8 @@ SUB_QUERY_TEMPLATES = {
 | Agent | Primary Model | Provider | Fallback Model | Fallback Provider |
 |-------|--------------|----------|---------------|------------------|
 | Orchestrator | `meta/llama-3.1-8b-instruct` | NVIDIA NIM | `gemini-2.0-flash` | Google |
+| Intent Router | No LLM (regex + entity count) | — | — | — |
+| Query Decomposer | `meta/llama-3.1-70b-instruct` | NVIDIA NIM | Rule-based fallback | — |
 | RAG Agent | `meta/llama-3.1-70b-instruct` | NVIDIA NIM | `meta/llama-3.1-70b-instruct` | Groq |
 | Web Search | `gemini-2.0-flash` | Google | `gpt-4o-mini` | OpenAI |
 | Synthesis | `meta/llama-3.1-70b-instruct` | NVIDIA NIM | — | — |
@@ -408,8 +411,8 @@ SUB_QUERY_TEMPLATES = {
 | Path | Models Called | Est. Input Tokens | Est. Cost |
 |------|---------------|-------------------|-----------|
 | RAG-only | Orchestrator + RAG + Citation | ~4K | ~$0.005 |
-| RAG + Web | All 5 agents | ~8K | ~$0.012 |
-| RAG + Web + DocGen | All 5 + render | ~10K | ~$0.016 |
+| RAG + Web | All 7 agents | ~8K | ~$0.012 |
+| RAG + Web + DocGen | All 7 + render | ~10K | ~$0.016 |
 
 ---
 

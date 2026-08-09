@@ -54,7 +54,7 @@
 |--------|------|---------|-------------|
 | POST | `/search` | `search_endpoint` | Single-pass RAG with cache, HyDE, fusion, rerank, MMR, validation |
 | POST | `/search/document` | `search_document_endpoint` | RAG + PDF/DOCX export (no DeepInsights) |
-| POST | `/deep-insights` | `deep_insights_endpoint` | Multi-agent pipeline (5 agents) |
+| POST | `/deep-insights` | `deep_insights_endpoint` | Multi-agent pipeline (7 agents) |
 | GET | `/deep-insights/route-check` | `route_check` | Debug: shows how a query would be routed |
 | CRUD | `/vault/items` | vault items | Research vault item management |
 | CRUD | `/vault/collections` | vault collections | Research collection management |
@@ -71,7 +71,7 @@
 - **SearchRequest**: `query` (1–500 chars), `top_k` (1–50, default 6), `save_to_vault` (bool), `vault_tags` (list[str])
 - **SearchResponse**: `answer, citations, query_intent, chunks_retrieved, cache_hit, confidence_score, recommendation, unverified_claims, safety_warnings, evidence_distribution, is_safe, needs_disclaimer, confidence_breakdown`
 - **DeepInsightsRequest**: `query, top_k=8, force_deep=False`
-- **DeepInsightsResponse**: `answer, sections, citations, sub_queries, contradictions, confidence, complexity_detected, processing_time_ms, mode="deep_insights"`
+- **DeepInsightsResponse**: `answer, sections, citations, sub_queries, sub_query_results, contradictions, sources_used, cached, timed_out, synthesis_result, citation_validation, confidence, complexity_detected, processing_time_ms`
 - **ReportRequest**: `report_type` (clinical_summary/evidence_review), `format` (json/pdf), plus query/answer/citations/safety data
 
 ### Middleware Stack (order matters)
@@ -208,7 +208,7 @@
 | `document_db.py` | MongoDB document storage operations |
 | `monitoring.py` | Metrics and monitoring for ingestion runs |
 | `llamaindex_integration.py` | Parent-child chunk retrieval (LlamaIndex patterns) — `HierarchicalChunkParser`, `ParentChildIndexer`, `ParentChildRetriever` |
-| `parsers/*` | PDF/XML/HTML parsing: `grobid.py` (GROBID 0.8.0 with configurable timeout/retry), `pubmed.py`, `icmr.py`, `cochrane.py`, `who.py`, `cdc.py`, `statpearls.py`, `ocr.py` |
+| `parsers/*` | PDF/XML/HTML parsing: `grobid.py` (GROBID 0.9.0 with configurable timeout/retry, `/api/health` endpoint), `pubmed.py`, `icmr.py`, `cochrane.py`, `who.py`, `cdc.py`, `statpearls.py`, `ocr.py` |
 | `celery_app.py` | Distributed task queue configuration |
 
 ### Available Ingestion Sources
