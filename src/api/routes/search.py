@@ -48,6 +48,28 @@ def _sanitize_query(query: str) -> str:
     return sanitized
 
 
+INSUFFICIENT_EVIDENCE_ANSWER = (
+    "Insufficient evidence in the knowledge base to answer this question. "
+    "Please try a more specific clinical query or consult the original guidelines."
+)
+
+
+def validate_citation_markers(answer: str, citation_count: int) -> str:
+    """Ensure every [N] marker maps to a citation index (BIS CIT rule).
+
+    Orphan markers are stripped (with a warning) rather than leaked to
+    clinicians, matching the BIS RAG orchestrator contract.
+    """
+    markers = {int(n) for n in re.findall(r"\[(\d+)\]", answer)}
+    valid = set(range(1, citation_count + 1))
+    orphan = markers - valid
+    if orphan:
+        logger.warning(f"Stripping orphan citation markers: {sorted(orphan)} (citations={citation_count})")
+        for n in sorted(orphan):
+            answer = re.sub(rf"\s*\[{n}\]", "", answer)
+    return answer
+
+
 class SearchRequest(BaseModel):
     query: str = Field(
         ...,
@@ -293,6 +315,12 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
         raise HTTPException(status_code=503, detail="LLM service unavailable") from exc
 
     citations = build_citation_list(final_chunks)
+
+    # BIS CIT rule: strip orphan [N] markers before validation so unverified
+    # claims never reach the clinician. Empty answers become insufficient-evidence.
+    answer = validate_citation_markers(answer, len(citations))
+    if not answer.strip():
+        answer = INSUFFICIENT_EVIDENCE_ANSWER
 
     validator_citations: list[dict[str, Any]] = []
     validator_chunks: list[dict[str, Any]] = []

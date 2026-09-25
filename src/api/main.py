@@ -14,6 +14,7 @@ from src.api.routes import search as search_router
 from src.api.routes import deep_insights as deep_insights_router
 from src.api.routes import vault as vault_router
 from src.api.routes import reports as reports_router
+from src.api.routes import conversations as conversations_router
 from src.api.middleware.rate_limit import RateLimitMiddleware
 from src.query.search.cache import SearchCache
 from src.query.search.query_understanding import QueryUnderstanding
@@ -332,3 +333,6 @@ app.include_router(
 )
 app.include_router(vault_router.router, prefix="/vault", tags=["Vault"])
 app.include_router(reports_router.router, prefix="/reports", tags=["Reports"])
+app.include_router(conversations_router.router, prefix="/conversations", tags=["Conversations"])
+# Versioned alias so the Next.js /api/v1/* proxy works without a backend path migration.
+app.include_router(conversations_router.router, prefix="/api/v1/conversations", tags=["Conversations"]) 
