@@ -1,0 +1,20 @@
+# Kaggle ingestion deps — mirrors requirements.txt pins, minus torch.
+# Kaggle images ship a CUDA torch build; pip-installing torch would replace
+# it with a CPU wheel and burn 20+ min. Never add torch here.
+sentence-transformers==3.1.1
+transformers==4.45.1
+numpy==1.26.4
+pymilvus>=2.5,<2.6
+pymongo==4.9.1
+motor==3.6.0
+httpx[http2]==0.27.2
+beautifulsoup4==4.12.3
+lxml==5.3.0
+biopython==1.84
+tqdm==4.66.5
+loguru==0.7.2
+redis==5.1.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+python-slugify==8.0.4
