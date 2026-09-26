@@ -8,6 +8,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
 from src.config.settings import get_settings
+from src.api.auth import get_optional_user_id
 from src.query.prompts import SYSTEM_PROMPT
 from src.query.validation.validator import enhance_response, validate_answer
 from src.query.search.cache import SearchCache
@@ -380,7 +381,7 @@ async def search_endpoint(payload: SearchRequest, request: Request) -> SearchRes
                 )
                 request.app.state.vault_store = vault_store
 
-            user_id = request.headers.get("X-User-ID", "default_user")
+            user_id = get_optional_user_id(request) or request.headers.get("X-User-ID", "default_user")
             vault_item = await vault_store.create_item(
                 user_id=user_id,
                 item_type="search_result",

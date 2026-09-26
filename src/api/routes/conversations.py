@@ -11,6 +11,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from src.config.settings import get_settings
+from src.api.auth import get_user_id
 from src.data.mongo.conversation_store import ConversationStore
 
 router = APIRouter()
@@ -26,7 +27,8 @@ def _store(request: Request) -> ConversationStore:
 
 
 def _user_id(request: Request) -> str:
-    return request.headers.get("X-User-ID", "default_user")
+    """Verified Supabase user.id when auth is configured, else dev fallback."""
+    return get_user_id(request)
 
 
 class CreateBody(BaseModel):

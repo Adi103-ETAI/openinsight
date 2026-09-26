@@ -281,6 +281,14 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "DEBUG"
 
+    # ===================== Auth (Supabase JWT) =====================
+    # Shared Supabase project with website + UI. Backend verifies the JWT
+    # statelessly (JWKS); no session rows. Empty = auth disabled (local dev
+    # falls back to X-User-ID header, same as before).
+    supabase_url: str = ""
+    supabase_jwt_secret: str = ""  # legacy HS256 secret (fallback)
+    supabase_jwt_audience: str = "authenticated"
+
     @classmethod
     def settings_customise_sources(
         cls,

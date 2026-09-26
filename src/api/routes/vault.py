@@ -17,6 +17,7 @@ from src.api.models.vault import (
     VaultItemUpdate,
 )
 from src.config.settings import get_settings
+from src.api.auth import get_user_id
 from src.data.mongo.vault_store import VaultStore
 
 router = APIRouter()
@@ -37,11 +38,10 @@ def _get_vault_store(request: Request) -> VaultStore:
 
 def _get_user_id(request: Request) -> str:
     """
-    Extract user ID from request.
-    In production, this would come from auth middleware.
-    For now, uses a header or defaults to 'default_user'.
+    Verified Supabase user.id when auth is configured, else the
+    X-User-ID dev fallback (see src/api/auth.py).
     """
-    return request.headers.get("X-User-ID", "default_user")
+    return get_user_id(request)
 
 
 # ── Items ────────────────────────────────────────────────────────────────────
