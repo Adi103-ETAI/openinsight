@@ -44,6 +44,7 @@ PUBMED_CONFIG = SourceConfig(
     indian_source_default=False,
     requires_api_key=False,  # API key is optional (raises rate limit if absent)
     api_key_env="NCBI_API_KEY",
+    respect_robots=False,  # E-utilities is a sanctioned API (key+email, own rate limits)
     extra={
         "db": "pubmed",
         "retmax": 200,  # max records per efetch call

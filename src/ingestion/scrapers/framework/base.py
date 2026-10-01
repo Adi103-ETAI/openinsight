@@ -60,6 +60,7 @@ class BaseScraper(abc.ABC):
             rate_limiter=self.rate_limiter,
             robots=self.robots,
             user_agent=self.config.user_agent,
+            verify_robots=self.config.respect_robots,
         )
         self.dedup = dedup_index or DedupIndex()
         self.metadata_extractor = MetadataExtractor(self.config.metadata_selectors)

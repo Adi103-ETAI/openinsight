@@ -160,6 +160,10 @@ class SourceConfig:
     indian_source_default: bool = False
     requires_api_key: bool = False
     api_key_env: str | None = None
+    # Sanctioned APIs (E-utilities, PMC OA API) are meant for programmatic
+    # access with key+email and their own rate limits — robots.txt crawling
+    # rules do not apply. Crawled HTML sources must leave this True.
+    respect_robots: bool = True
     # Allow per-source custom config
     extra: dict[str, Any] = field(default_factory=dict)
 
