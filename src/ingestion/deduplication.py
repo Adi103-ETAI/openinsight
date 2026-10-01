@@ -107,3 +107,78 @@ def enrich_document_hashes(document: DocumentRecord) -> DocumentRecord:
     """
     document.content_hash = compute_content_hash(document.content)
     return document
+
+
+# ── Change detection (ingestion idempotency) ───────────────────────────────
+# Unchanged documents (same content_hash already stored) must be skipped
+# before chunking/embedding. A hash match on a `failed` document allows
+# reprocessing; only `ready` means "already indexed, skip".
+
+#: Stored `status` values that mean "already indexed — skip reprocessing".
+SKIP_ON_STATUSES = frozenset({"ready"})
+
+
+def should_skip_unchanged(stored_status: Optional[str]) -> bool:
+    """
+    Pure decision: skip reprocessing iff the stored document with the same
+    content hash has a status meaning "already indexed".
+
+    Args:
+        stored_status: `status` field of the stored `documents_v2` record,
+            or None when no record with this content hash exists.
+
+    Returns:
+        True  — identical hash stored with status `ready`: skip
+                (do not chunk/embed/upsert).
+        False — no match, or match with any other status (e.g. `failed`):
+                allow (re)processing.
+    """
+    return stored_status in SKIP_ON_STATUSES
+
+
+async def find_existing_status_by_hash(collection, content_hash: str) -> Optional[str]:
+    """
+    Look up the stored `status` for a content hash in `documents_v2`.
+
+    Only depends on `collection.find_one`, so tests can pass a dict-backed
+    stub. Never raises: any lookup failure returns None (→ reprocess).
+
+    Returns:
+        The stored status string, or None when no record matches, the hash
+        is empty, or the lookup fails.
+    """
+    if not content_hash:
+        return None
+    try:
+        existing = await collection.find_one(
+            {"content_hash": content_hash}, {"_id": 1, "status": 1}
+        )
+    except Exception:
+        return None
+    if not existing:
+        return None
+    try:
+        status = existing.get("status")
+    except AttributeError:
+        return None
+    return status if isinstance(status, str) else None
+
+
+def new_scraped_summary(documents_total: int) -> dict:
+    """
+    Build the summary dict for `ingest_scraped_documents`.
+
+    Keeps every key the notebook/clients already read
+    (`documents_total`, `documents_stored`, `chunks_created`,
+    `chunks_indexed`, `chunks_filtered`, `files_failed`) and adds
+    `documents_skipped` for change-detection skips.
+    """
+    return {
+        "documents_total": documents_total,
+        "documents_stored": 0,
+        "chunks_created": 0,
+        "chunks_indexed": 0,
+        "chunks_filtered": 0,
+        "files_failed": 0,
+        "documents_skipped": 0,
+    }

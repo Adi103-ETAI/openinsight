@@ -171,6 +171,29 @@ class MilvusVectorStore(VectorStore):
 
         return len(rows)
 
+    def delete_points_by_ids(
+        self,
+        ids: list[str],
+        *,
+        collection_name: str | None = None,
+    ) -> int:
+        """Delete points by primary-key id without touching the collection.
+
+        Never drops the collection — only the listed point ids are removed.
+        Returns the number of points deleted.
+        """
+        str_ids = [str(i) for i in ids]
+        if not str_ids:
+            return 0
+        target = self._resolve_collection_name(collection_name)
+        result = self.client.delete(collection_name=target, ids=str_ids)
+        if isinstance(result, dict):
+            try:
+                return int(result.get("delete_count", len(str_ids)))
+            except (TypeError, ValueError):
+                return len(str_ids)
+        return len(str_ids)
+
     def search_dense(
         self,
         dense_vector: list[float],

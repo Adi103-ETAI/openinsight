@@ -16,6 +16,11 @@ from src.config.settings import get_settings
 from src.ml.chunking.chunker import ChunkV3, HierarchicalChunkerV3
 from src.ingestion.checkpoint import CheckpointManager
 from src.ingestion.dedupe import DocumentDeduplicator
+from src.ingestion.deduplication import (
+    find_existing_status_by_hash,
+    new_scraped_summary,
+    should_skip_unchanged,
+)
 from src.ingestion.document_db import ChunkRecord, DocumentRecord
 from src.ingestion.validation import validate_chunk, validate_document
 from src.ml.embedding.embedder import BaseEmbedder, create_embedder
@@ -1131,6 +1136,22 @@ class IngestionPipeline:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: func(*args))
 
+    async def _lookup_stored_status_by_hash(self, content_hash: str) -> str | None:
+        """
+        Look up the stored `status` for a content hash in `documents_v2`.
+
+        Change-detection read path for `ingest_scraped_documents`: a `ready`
+        hit means the document is unchanged and must be skipped; any other
+        outcome (no match, `failed`, lookup error) allows (re)processing.
+        Never raises and never writes — returns None on any failure so a
+        degraded lookup degrades to reprocessing, not data loss.
+        """
+        try:
+            collection = self.mongo.db["documents_v2"]
+        except Exception:
+            return None
+        return await find_existing_status_by_hash(collection, content_hash)
+
     async def ingest_scraped_documents(
         self,
         documents: list[tuple[Any, list[Any]]],
@@ -1180,14 +1201,7 @@ class IngestionPipeline:
         )
 
         run_started_at = datetime.utcnow()
-        summary: dict[str, int] = {
-            "documents_total": len(documents),
-            "documents_stored": 0,
-            "chunks_created": 0,
-            "chunks_indexed": 0,
-            "chunks_filtered": 0,
-            "files_failed": 0,
-        }
+        summary: dict[str, int] = new_scraped_summary(len(documents))
 
         # Process in batches
         for batch_start in range(0, len(documents), batch_size):
@@ -1235,6 +1249,25 @@ class IngestionPipeline:
 
                 # Normalize document
                 normalized = self._normalize_document(doc_dict, source)
+
+                # Change detection: skip unchanged docs before any chunk/embed
+                # work. An identical content_hash stored with status `ready`
+                # means "already indexed" — count it and move on. Any other
+                # outcome (no match, `failed`, lookup error) → (re)process.
+                content_hash = normalized.get("content_hash")
+                if content_hash:
+                    stored_status = await self._lookup_stored_status_by_hash(
+                        content_hash
+                    )
+                    if should_skip_unchanged(stored_status):
+                        logger.info(
+                            "[pipeline:scraped] Skipping unchanged document '%s' "
+                            "(content_hash %s already ready)",
+                            normalized.get("title", "")[:60],
+                            str(content_hash)[:12],
+                        )
+                        summary["documents_skipped"] += 1
+                        continue
 
                 # Document-level validation
                 doc_record_validated = self._to_document_record(normalized, source)
