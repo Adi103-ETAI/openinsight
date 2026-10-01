@@ -55,6 +55,7 @@ STATPEARLS_CONFIG = SourceConfig(
     india_relevant_default=False,  # international reference, not India-specific
     indian_source_default=False,  # NCBI = US government
     requires_api_key=False,
+    respect_robots=False,  # E-utilities is a sanctioned API (key+email, own rate limits)
     api_key_env="NCBI_API_KEY",
     extra={
         "db": "books",

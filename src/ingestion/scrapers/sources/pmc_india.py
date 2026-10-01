@@ -43,6 +43,7 @@ PMC_INDIA_CONFIG = SourceConfig(
     india_relevant_default=True,  # query filters for India affiliations
     indian_source_default=False,  # PMC is international; articles have Indian authors
     requires_api_key=False,
+    respect_robots=False,  # E-utilities is a sanctioned API (key+email, own rate limits)
     api_key_env="NCBI_API_KEY",
     extra={
         "db": "pmc",
