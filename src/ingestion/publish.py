@@ -118,29 +118,40 @@ def _chunk_title(doc: dict[str, Any], doc_title: dict[str, str]) -> str:
 def collect_mongo_stats(db: Any, source: str, limit: int = 500) -> tuple[int, list[str], list[dict[str, Any]]]:
     """Return (chunk_count, sample_texts, sample_metas) for a source.
 
-    Chunks carry no top-level source tag — resolve via parent documents
-    (documents_v2.source) joined on doc_id.
+    Chunks self-identify via metadata.source_type; parent-doc join is only
+    a fallback for legacy rows. (doc_id forms vary: pmid_123,
+    doi_https:__..., raw URLs — never join on those.)
     """
+    meta_q: dict[str, Any] = {"$or": [{"metadata.source_type": source},
+                                      {"metadata.source": source}]}
+    total = db["chunks_v2"].count_documents(meta_q)
+    cursor = db["chunks_v2"].find(meta_q).limit(limit)
+    texts, metas = [], []
+    for doc in cursor:
+        meta = doc.get("metadata") or {}
+        texts.append(str(doc.get("text") or doc.get("chunk_text") or ""))
+        metas.append({"title": str(meta.get("title") or doc.get("title") or ""),
+                      "source_type": str(meta.get("source_type") or meta.get("source") or "")})
+    if total:
+        return total, texts, metas
+    # Fallback: parent-doc join on exact ids (legacy rows without metadata)
     docs = list(db["documents_v2"].find(
         {"$or": [{"source": source}, {"source_type": source}]},
         {"_id": 1, "doc_id": 1, "title": 1},
     ))
-    ids = {str(d.get("_id")) for d in docs} | {str(d.get("doc_id", "")) for d in docs}
-    doc_source = {i: source for i in ids}
+    raw_ids = {str(d.get("_id")) for d in docs} | {str(d.get("doc_id", "")) for d in docs}
+    if not raw_ids:
+        return 0, [], []
+    total = db["chunks_v2"].count_documents({"doc_id": {"$in": sorted(raw_ids)}})
+    cursor = db["chunks_v2"].find({"doc_id": {"$in": sorted(raw_ids)}}).limit(limit)
     doc_title = {}
     for d in docs:
         for k in (str(d.get("_id")), str(d.get("doc_id", ""))):
             doc_title[k] = str(d.get("title", ""))
-    if not ids:
-        return 0, [], []
-    q: dict[str, Any] = {"doc_id": {"$in": sorted(ids)}}
-    total = db["chunks_v2"].count_documents(q)
-    cursor = db["chunks_v2"].find(q).limit(limit)
-    texts, metas = [], []
     for doc in cursor:
         texts.append(str(doc.get("text") or doc.get("chunk_text") or ""))
-        metas.append({"title": _chunk_title(doc, doc_title),
-                      "source_type": _chunk_source(doc, doc_source)})
+        metas.append({"title": doc_title.get(str(doc.get("doc_id", "")), ""),
+                      "source_type": source})
     return total, texts, metas
 
 
