@@ -49,6 +49,8 @@ class DocumentRecord(BaseModel):
     content_hash: Optional[str] = None   # SHA-256 of normalised content
     is_duplicate: bool = False
     duplicate_of: Optional[str] = None   # document_id of canonical copy
+    # Publish lifecycle: indexed → validated → ready | failed(stage, error)
+    status: str = "indexed"
 
 
 # ── Chunk model ──────────────────────────────────────────────────────────────
