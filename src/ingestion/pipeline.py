@@ -56,6 +56,41 @@ except ImportError:
         return None
 
 
+# ── Raw-lake parser dispatch (mirrors notebooks/kaggle_ingestion_v2.ipynb) ──
+# Maps a manifest `source` to the ScrapedDocument-based parser the notebook
+# cell uses for that source. PubMed is intentionally absent: its raw bytes are
+# efetch XML and go through _parse_pubmed_xml_bytes instead. Sources absent
+# here fall back to the minimal DocumentRecord + ChunkRecord path, exactly
+# like the notebook's parser-less branch.
+_SCRAPED_PARSER_PATHS = {
+    "indmed": "src.ingestion.parsers.indmed:IndMEDParser",
+    "medknow": "src.ingestion.parsers.medknow:MedknowParser",
+    "pmc_india": "src.ingestion.parsers.pmc_india:PMCIndiaParser",
+    "statpearls": "src.ingestion.parsers.statpearls_v2:StatPearlsParser",
+    "ncbi_bookshelf": "src.ingestion.parsers.ncbi_bookshelf:NCBIBookshelfParser",
+    "cdsco": "src.ingestion.parsers.cdsco:CDSCOParser",
+    "ctri": "src.ingestion.parsers.ctri:CTRIParser",
+    "nfi": "src.ingestion.parsers.nfi:NFIParser",
+}
+
+
+def get_scraped_parser(source_name: str):
+    """Return the ScrapedDocument parser instance for `source_name`, or None.
+
+    Lazy import so pipeline import time never pulls parser deps (bs4, …).
+    Returns None for sources without a dedicated parser (e.g. pubmed) —
+    callers must use the fallback/minimal path, mirroring the notebook.
+    """
+    path = _SCRAPED_PARSER_PATHS.get(source_name)
+    if not path:
+        return None
+    module_path, class_name = path.split(":")
+    import importlib
+
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)()
+
+
 class IngestionPipeline:
     """
     Ingestion orchestrator for local directories.
@@ -852,12 +887,27 @@ class IngestionPipeline:
 
     def _parse_pubmed_xml_file(self, file_path: Path) -> list[dict[str, Any]]:
         try:
-            tree = ET.parse(file_path)
-        except ET.ParseError as exc:
-            logger.error("[pipeline] Invalid XML %s: %s", file_path, exc)
+            data = file_path.read_bytes()
+        except OSError as exc:
+            logger.error("[pipeline] Cannot read %s: %s", file_path, exc)
             return []
+        return self._parse_pubmed_xml_bytes(data, str(file_path))
 
-        root = tree.getroot()
+    def _parse_pubmed_xml_bytes(
+        self, content: bytes, url_hint: str = ""
+    ) -> list[dict[str, Any]]:
+        """Parse efetch XML bytes (raw-lake path) with the existing article parsers.
+
+        Same element handling as _parse_pubmed_xml_file: regular
+        PubmedArticle elements via _parse_pubmed_article, PubmedBookArticle
+        (StatPearls/books) via _parse_pubmed_book_article. No new parsing.
+        """
+        try:
+            text = content.decode("utf-8", errors="replace")
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            logger.error("[pipeline] Invalid XML bytes (hint=%s): %s", url_hint, exc)
+            return []
 
         # Collect regular PubMed articles
         articles = root.findall(".//PubmedArticle")
@@ -868,17 +918,22 @@ class IngestionPipeline:
         book_articles = root.findall(".//PubmedBookArticle")
 
         docs: list[dict[str, Any]] = []
+        anchor = Path(url_hint or "raw")
 
         # Parse regular PubMed articles
         for article in articles:
-            doc = self._parse_pubmed_article(article, file_path)
+            doc = self._parse_pubmed_article(article, anchor)
             if doc:
+                if url_hint:
+                    doc["url"] = url_hint
                 docs.append(doc)
 
         # Parse book articles (StatPearls, books, etc.)
         for book_article in book_articles:
-            doc = self._parse_pubmed_book_article(book_article, file_path)
+            doc = self._parse_pubmed_book_article(book_article, anchor)
             if doc:
+                if url_hint:
+                    doc["url"] = url_hint
                 docs.append(doc)
 
         return docs
@@ -1173,6 +1228,10 @@ class IngestionPipeline:
         this method handles ChunkRecord objects natively (produced by the
         IndMED/Medknow/PMC India parsers) without conversion.
 
+        Shared-core note: the batch loop lives in _ingest_parsed_tuples so
+        ingest_raw_batch reuses it (validate → chunk-check → embed → upsert →
+        mongo, including change-detection skip). This wrapper only delegates.
+
         Args:
             documents: list of (DocumentRecord, list[ChunkRecord]) tuples.
                 DocumentRecord and ChunkRecord are from src.ingestion.document_db.
@@ -1184,6 +1243,169 @@ class IngestionPipeline:
             Summary dict with counts:
                 documents_total, documents_stored, chunks_created, chunks_indexed,
                 chunks_filtered, files_failed
+        """
+        return await self._ingest_parsed_tuples(
+            documents=documents,
+            source=source,
+            batch_size=batch_size,
+            recreate_index=recreate_index,
+        )
+
+    def _raw_item_to_parsed(
+        self, source: str, content: bytes, meta: dict[str, Any]
+    ) -> tuple[Any, list[Any]] | None:
+        """Route one raw-lake item to its existing per-source parser.
+
+        Dispatch mirrors the notebook cell: `pubmed` (or any XML
+        `content_type`) → efetch XML bytes via _parse_pubmed_xml_bytes;
+        HTML sources → the ScrapedDocument parser from _SCRAPED_PARSER_PATHS;
+        anything else → the notebook's minimal fallback record + chunk.
+        Returns a (DocumentRecord, list[ChunkRecord]) tuple, or None when
+        the item carries no usable content.
+        """
+        from src.ingestion.document_db import ChunkRecord, DocumentRecord
+
+        url = str(meta.get("url") or "")
+        title_hint = str(meta.get("title") or "")
+        content_type = str(meta.get("content_type") or "").lower()
+
+        if source == "pubmed" or "xml" in content_type:
+            parsed_dicts = self._parse_pubmed_xml_bytes(content, url)
+            if not parsed_dicts:
+                return None
+            # efetch payloads can bundle several articles; only the first
+            # usable one is kept (multi-article splitting is a later pass).
+            doc = self._normalize_document(parsed_dicts[0], source)
+            text = str(doc.get("content") or "").strip()
+            if len(text) < 80:
+                return None
+            record = DocumentRecord(
+                source_type=source,
+                title=doc.get("title") or title_hint or "Untitled",
+                content=text[:50000],
+                url=url,
+                doi=doc.get("doi"),
+                year=doc.get("year") or None,
+                journal=doc.get("journal"),
+                parser_version=f"{source}-raw-v1",
+            )
+            chunk = ChunkRecord(
+                document_id="",
+                source_type=source,
+                title=record.title,
+                chunk_text=text[:8000],
+                chunk_index=0,
+            )
+            return record, [chunk]
+
+        from src.ingestion.scrapers.framework.models import ScrapedDocument
+
+        scraped = ScrapedDocument(
+            url=url,
+            source=source,
+            content=content,
+            content_type=str(meta.get("content_type") or ""),
+            title=title_hint or None,
+            metadata={"doc_id": meta.get("doc_id"), "sha256": meta.get("sha256")},
+        )
+        parser = get_scraped_parser(source)
+        if parser is not None:
+            return parser.parse(scraped)
+
+        # No dedicated parser — minimal fallback, same as the notebook's
+        # parser-less branch.
+        text = content.decode("utf-8", errors="replace")[:50000]
+        record = DocumentRecord(
+            source_type=source,
+            title=title_hint or "Untitled",
+            content=text,
+            url=url,
+            parser_version=f"{source}-scraped-v1",
+        )
+        chunk_text = text[:8000]
+        if len(chunk_text.strip()) < 80:
+            return None
+        chunk = ChunkRecord(
+            document_id="",
+            source_type=source,
+            title=record.title,
+            chunk_text=chunk_text,
+            chunk_index=0,
+        )
+        return record, [chunk]
+
+    async def ingest_raw_batch(
+        self,
+        source: str,
+        limit: int = 0,
+        batch_size: int = 10,
+        recreate_index: bool = False,
+    ) -> dict[str, int]:
+        """Ingest raw-lake bytes for `source` through the existing parsers.
+
+        Reads (meta, bytes) pairs from iter_raw, routes each item to its
+        per-source parser via _raw_item_to_parsed, then runs the shared
+        downstream (_ingest_parsed_tuples: validate → embed → upsert →
+        mongo, honoring the change-detection skip that counts
+        documents_skipped). Additive: ingest_scraped_documents is untouched.
+
+        Args:
+            source: raw-lake source dir name (e.g. "pubmed", "statpearls").
+            limit: max manifest entries to read (0 = no limit).
+            batch_size: docs per downstream batch (default 10).
+            recreate_index: whether to recreate the Milvus collection.
+
+        Returns:
+            Standard summary dict (same keys as ingest_scraped_documents).
+        """
+        from src.ingestion.raw_lake import iter_raw
+
+        documents: list[tuple[Any, list[Any]]] = []
+        documents_total = 0
+        parse_failed = 0
+
+        for meta, content in iter_raw(source, limit):
+            documents_total += 1
+            if meta.get("error"):
+                parse_failed += 1
+                continue
+            item_source = str(meta.get("source") or source)
+            try:
+                parsed = self._raw_item_to_parsed(item_source, content, meta)
+            except Exception as e:
+                logger.warning(
+                    "[pipeline:raw] Raw item parse failed (%s): %s",
+                    meta.get("doc_id"),
+                    e,
+                )
+                parsed = None
+            if parsed is None:
+                parse_failed += 1
+                continue
+            documents.append(parsed)
+
+        summary = await self._ingest_parsed_tuples(
+            documents=documents,
+            source=source,
+            batch_size=batch_size,
+            recreate_index=recreate_index,
+        )
+        summary["documents_total"] = documents_total
+        summary["files_failed"] += parse_failed
+        return summary
+
+    async def _ingest_parsed_tuples(
+        self,
+        documents: list[tuple[Any, list[Any]]],
+        source: str,
+        batch_size: int = 10,
+        recreate_index: bool = False,
+    ) -> dict[str, int]:
+        """Shared downstream for parsed tuples (scraped + raw-lake paths).
+
+        validate → enrich → quality → embed → upsert → mongo → monitor,
+        including the change-detection skip (documents_skipped). Both
+        ingest_scraped_documents and ingest_raw_batch delegate here.
         """
         import uuid
 

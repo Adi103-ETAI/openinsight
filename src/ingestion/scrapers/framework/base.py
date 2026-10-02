@@ -82,12 +82,46 @@ class BaseScraper(abc.ABC):
 
         Returns None on failure (the failure is logged + recorded in the
         dead-letter queue by the caller, not here).
+
+        On success, the raw bytes are also persisted to the raw lake
+        (best-effort: a lake-write failure never fails the fetch).
         """
         result = await self.http.fetch(job.url)
         if not result.ok or not result.content:
             logger.warning(f"[{self.config.name}] fetch failed: {job.url} — {result.error}")
             return None
-        return await self.process(result, job)
+        doc = await self.process(result, job)
+        if doc is not None:
+            self._write_raw_lake_best_effort(job, result, doc)
+        return doc
+
+    def _write_raw_lake_best_effort(self, job: CrawlJob, result: ScrapeResult, doc: ScrapedDocument) -> None:
+        """Persist fetched bytes to the raw lake. Never raises."""
+        try:
+            from src.ingestion.raw_lake import write_raw
+
+            meta_job = job.metadata or {}
+            doc_id = (
+                meta_job.get("doc_id")
+                or getattr(doc, "pmid", None)
+                or getattr(doc, "doi", None)
+                or job.url
+            )
+            write_raw(
+                self.config.name,
+                str(doc_id),
+                bytes(result.content or b""),
+                {
+                    "url": result.url,
+                    "fetched_at": result.fetched_at,
+                    "content_type": result.content_type or doc.content_type or "",
+                    "license": meta_job.get("license", ""),
+                    "title": doc.title or "",
+                    "error": None,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — lake write must never fail fetch
+            logger.debug(f"[{self.config.name}] raw lake write failed (non-fatal): {exc}")
 
     async def process(self, result: ScrapeResult, job: CrawlJob) -> ScrapedDocument | None:
         """Convert a raw ScrapeResult into a ScrapedDocument.
